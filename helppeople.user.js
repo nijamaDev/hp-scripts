@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelpPeople Mejoras
 // @namespace    helppeople
-// @version      1.1
+// @version      1.2
 // @description  Extensión de funcionalidades para HelpPeople
 // @updateURL    https://raw.githubusercontent.com/nijamaDev/hp-scripts/main/helppeople.user.js
 // @downloadURL  https://raw.githubusercontent.com/nijamaDev/hp-scripts/main/helppeople.user.js
@@ -229,6 +229,10 @@
     opt.click();
     return true;
   }
+  function isSearchFieldSet(name) {
+    const s = searchFieldSelect();
+    return !!(s && s.textContent.trim() === name);
+  }
   async function searchFor(text) {
     const input = await waitForRetry(searchInput);
     if (!input) return false;
@@ -321,14 +325,16 @@
         await sleep(400);
       }
       let filtersClear = await clearFilters();
-      await setSearchField(SEARCH_FIELD_CODE);
       for (let attempt = 0; attempt < 10; attempt++) {
+        // Antes de buscar, confirma las condiciones: filtros limpios y "Por código".
+        if (!filtersClear) filtersClear = await clearFilters();
+        if (!isSearchFieldSet(SEARCH_FIELD_CODE)) await setSearchField(SEARCH_FIELD_CODE);
+        const ready = filtersClear && isSearchFieldSet(SEARCH_FIELD_CODE);
         await searchFor(code);
         if (await waitFor(() => isTicketVisible(code), 1500, 100)) break;
-        // La búsqueda se aplicó y no encontró nada, y se confirmó que no hay filtros:
-        // el ticket no existe, así que no hay nada que reintentar.
-        if (filtersClear && qa('tr.ant-table-row').length === 0) break;
-        // En caso contrario, puede que la búsqueda aún no haya surtido efecto o que haya reaparecido un filtro.
+        // Con las condiciones confirmadas y la búsqueda aplicada sin resultados, no existe.
+        if (ready && qa('tr.ant-table-row').length === 0) break;
+        // En caso contrario, puede que falte algo; se revalúa en la próxima vuelta.
         filtersClear = await clearFilters();
       }
       await sleep(300);

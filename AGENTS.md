@@ -186,7 +186,10 @@ count, a minimize button (`#hp-todo-min`, collapses the panel), and a hamburger 
    and retries up to 10 times rather than blocking on one long timeout. The ticket-search loop
    re-triggers the search on each attempt in case the first trigger was missed — but when the
    filters are confirmed clear and the table comes back empty (`tr.ant-table-row` count 0, the
-   "Sin datos" state), it stops instead of retrying: the ticket simply doesn't exist.
+   "Sin datos" state), it stops instead of retrying: the ticket simply doesn't exist. Before each
+   attempt it re-checks the preconditions (`isSearchFieldSet('Por código')` and filters clear),
+   because the app can silently reset the search-field selector; the early-stop only applies when
+   both were confirmed for that attempt.
 
 7. **`stopPropagation()` on the tag menu.** When you click a color swatch or toggle a tag, the
    menu re-renders its own content, which **detaches the clicked element**. A
