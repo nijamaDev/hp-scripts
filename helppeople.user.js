@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelpPeople Mejoras
 // @namespace    helppeople
-// @version      1.2
+// @version      1.3
 // @description  Extensión de funcionalidades para HelpPeople
 // @updateURL    https://raw.githubusercontent.com/nijamaDev/hp-scripts/main/helppeople.user.js
 // @downloadURL  https://raw.githubusercontent.com/nijamaDev/hp-scripts/main/helppeople.user.js
@@ -17,12 +17,6 @@
   // CONFIGURACIÓN DE FUNCIONES - Coloca en "false" las funciones a desactivar
   // ============================================================
   const CONFIG = {
-    // Respalda los tickets en IndexedDB y los restaura si se borra el localStorage
-    backupTodo: true,
-
-    // Por defecto, el buscador usa "Por código" en lugar de "Por asunto"
-    defaultSearchByCode: true,
-
     // Recuerda si estabas en Dashboard o Solicitudes al recargar la página
     persistModule: true,
 
@@ -47,6 +41,7 @@
   const TAG_COLORS = ['#1677ff', '#52c41a', '#faad14', '#f5222d', '#722ed1', '#13c2c2', '#fa8c16', '#eb2f96'];
   const MODULES = ['Dashboard', 'Solicitudes'];
   const SEARCH_FIELD_CODE = 'Por código';
+  const SEARCH_FIELD_SUBJECT = 'Por asunto';
   const VIEWS = [
     { key: 'grilla', title: 'Vista grilla' },
     { key: 'detallada', title: 'Vista detallada' },
@@ -126,7 +121,7 @@
     }
   }
   function backupNow() {
-    if (!CONFIG.backupTodo || typeof indexedDB === 'undefined') return;
+    if (!CONFIG.todoWidget || typeof indexedDB === 'undefined') return;
     // Si los tickets no están (p. ej. justo tras cerrar sesión), conserva el
     // último respaldo bueno en vez de sobrescribirlo con un estado vacío.
     if (localStorage.getItem(KEY_TODO) === null) return;
@@ -136,7 +131,7 @@
   }
   let backupTimer = null;
   function scheduleBackup() {
-    if (!CONFIG.backupTodo) return;
+    if (!CONFIG.todoWidget) return;
     if (backupTimer) return;
     backupTimer = setTimeout(() => {
       backupTimer = null;
@@ -144,7 +139,7 @@
     }, 800);
   }
   async function restoreBackup() {
-    if (!CONFIG.backupTodo || typeof indexedDB === 'undefined') return false;
+    if (!CONFIG.todoWidget || typeof indexedDB === 'undefined') return false;
     const snap = await idbGet('snapshot');
     if (!snap || snap[KEY_TODO] == null) return false;
     let restored = false;
@@ -299,31 +294,45 @@
     }
     return !hasBadge();
   }
+  async function ensureListReady() {
+    if (!window.location.hash.includes('helpdesk')) {
+      window.location.hash = '#/helppeople/helpdesk';
+      await waitForRetry(() => findModuleButtons()['Solicitudes']);
+      await sleep(400);
+    }
+    const detail = qa('h3').find((h) => /Detalle de solicitud/.test(h.textContent));
+    if (detail) {
+      const back = q('.anticon-arrow-left');
+      if (back) back.click();
+      await sleep(400);
+    }
+    if (activeModule() !== 'Solicitudes') {
+      const sol = qa('button.ant-btn').find((b) => b.textContent.includes('Solicitudes'));
+      if (sol) sol.click();
+      await sleep(600);
+    }
+    const view = activeView();
+    if (view && view !== 'grilla') {
+      const grilla = viewButtons()['grilla'];
+      if (grilla) grilla.click();
+      await sleep(400);
+    }
+  }
+  async function searchPlatformBySubject(text) {
+    suppressView = true;
+    try {
+      await ensureListReady();
+      await clearFilters();
+      await setSearchField(SEARCH_FIELD_SUBJECT);
+      await searchFor(text);
+    } finally {
+      suppressView = false;
+    }
+  }
   async function openTicket(code) {
     suppressView = true;
     try {
-      if (!window.location.hash.includes('helpdesk')) {
-        window.location.hash = '#/helppeople/helpdesk';
-        await waitForRetry(() => findModuleButtons()['Solicitudes']);
-        await sleep(400);
-      }
-      const detail = qa('h3').find((h) => /Detalle de solicitud/.test(h.textContent));
-      if (detail) {
-        const back = q('.anticon-arrow-left');
-        if (back) back.click();
-        await sleep(400);
-      }
-      if (activeModule() !== 'Solicitudes') {
-        const sol = qa('button.ant-btn').find((b) => b.textContent.includes('Solicitudes'));
-        if (sol) sol.click();
-        await sleep(600);
-      }
-      const view = activeView();
-      if (view && view !== 'grilla') {
-        const grilla = viewButtons()['grilla'];
-        if (grilla) grilla.click();
-        await sleep(400);
-      }
+      await ensureListReady();
       let filtersClear = await clearFilters();
       for (let attempt = 0; attempt < 10; attempt++) {
         // Antes de buscar, confirma las condiciones: filtros limpios y "Por código".
@@ -362,21 +371,6 @@
       },
       true
     );
-  }
-
-  // ---------- característica: buscar por código por defecto ----------
-  function setupDefaultSearchByCode() {
-    const seenSelects = new WeakSet();
-    const observer = new MutationObserver(() => {
-      const s = searchFieldSelect();
-      if (s && !seenSelects.has(s)) {
-        seenSelects.add(s);
-        if (s.textContent.trim() !== SEARCH_FIELD_CODE) {
-          setSearchField(SEARCH_FIELD_CODE);
-        }
-      }
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
   }
 
   // ---------- característica: recordar vista ----------
@@ -699,7 +693,7 @@
       if (found.length === 0) {
         hint.textContent = /^\d+$/.test(query)
           ? 'Sin coincidencias. Enter para buscar la solicitud #' + query
-          : 'Sin coincidencias';
+          : 'Sin coincidencias. Enter para buscar por asunto';
         hint.classList.remove('hidden');
       } else {
         hint.classList.add('hidden');
@@ -1099,13 +1093,18 @@
     searchEl.addEventListener('input', () => render());
     searchEl.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter') return;
-      const query = currentQuery();
-      if (!/^\d+$/.test(query)) return;
-      const found = loadArr(KEY_TODO).filter((t) => matches(query, t));
-      if (found.length === 0) {
-        e.target.value = '';
-        render();
-        openTicket(query);
+      const raw = (e.target.value || '').trim();
+      if (!raw) return;
+      e.target.value = '';
+      render();
+      if (/^\d+$/.test(raw)) {
+        // Por código: abre la coincidencia (exacta o parcial) o la busca en la plataforma.
+        const list = loadArr(KEY_TODO);
+        const match = list.find((t) => t.code === raw) || list.find((t) => t.code.includes(raw));
+        openTicket(match ? match.code : raw);
+      } else {
+        // Con letras: búsqueda por asunto en la plataforma, sin abrir nada.
+        searchPlatformBySubject(raw);
       }
     });
 
@@ -1366,14 +1365,13 @@
   }
 
   // ---------- inicio ----------
-  if (CONFIG.backupTodo) await restoreBackup();
+  if (CONFIG.todoWidget) await restoreBackup();
   if (CONFIG.persistModule) setupPersistModule();
-  if (CONFIG.defaultSearchByCode) setupDefaultSearchByCode();
   if (CONFIG.persistView) setupPersistView();
   if (CONFIG.todoWidget) setupTodoWidget();
   if (CONFIG.tallerDescription) setupTallerDescription();
 
-  if (CONFIG.backupTodo) {
+  if (CONFIG.todoWidget) {
     backupNow();
     setInterval(backupNow, 15000);
     // Si la app borra el localStorage en caliente (sin recargar), restaura y redibuja.

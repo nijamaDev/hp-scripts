@@ -77,12 +77,10 @@ Opening a ticket shows a detail view with:
 ### Feature toggles (top of the file, `CONFIG`)
 
 - `persistModule` — remembers Dashboard vs Solicitudes across reloads (`hp_ui_state.module`).
-- `defaultSearchByCode` — sets the search field selector to "Por código".
 - `persistView` — remembers grilla/detallada/órdenes (`hp_ui_state.view`) and re-applies it
   when the app resets the view to grilla.
-- `todoWidget` — the floating todo-list widget.
+- `todoWidget` — the floating todo-list widget. Enabling it also enables the IndexedDB backup.
 - `tallerDescription` — removes the OT "Descripción" height cap.
-- `backupTodo` — mirrors the `hp_*` keys to IndexedDB and restores them if `localStorage` is wiped.
 
 ### localStorage keys owned by the userscript
 
@@ -135,7 +133,9 @@ count, a minimize button (`#hp-todo-min`, collapses the panel), and a hamburger 
 - Removing the open ticket from the list exits the ticket (clicks the app's back arrow).
 - Per-item: priority dot+label, tag chips, a tag menu (circle/dot icon), and a remove button.
 - Search box filters by code/subject across **all tabs** (the tab bar is hidden while a query is
-  present); a numeric query with no match + Enter opens that ticket.
+  present). On Enter: a **numeric** query opens the matching ticket (exact or partial match in the
+  list, else searched by code on the platform); a query with **letters** runs a *subject* search on
+  the platform and does **not** open a ticket.
 - HTML5 drag-and-drop reordering (live "make space" on `dragover`) with a semi-transparent drag
   image so the landing gap stays visible.
 - **Tabs** (`#hp-todo-tabs`): a horizontal bar under the header. The first tab is the fallback.
@@ -176,10 +176,10 @@ count, a minimize button (`#hp-todo-min`, collapses the panel), and a hamburger 
    them *before* searching avoids a failed-search delay. The clear is a no-op when no filters
    are active (checks the filter badge first), so it doesn't flash the panel when nothing to clear.
 
-5. **`defaultSearchByCode` is a one-time set per element (WeakSet), not sticky.** The app
-   resets the selector to "Por asunto" on filter operations. We wanted "código" as the default
-   while still letting the user manually pick "asunto" without it fighting them. Trade-off: after
-   a filter operation the field can end up back on "asunto" — accepted.
+5. **The app's own search field is left alone (removed `defaultSearchByCode`).** The script used
+   to force the app's "Por asunto"/"Por código" selector to "Por código" on load, but that fought
+   the user. Searches are now driven from the todo widget's search box; the app field is only set
+   to "Por código" transiently by `openTicket()` when it needs to search by code.
 
 6. **Waits are short (1s) with retries (up to 10).** The React app renders asynchronously, so
    elements often appear a moment after an action. `waitForRetry(fn)` polls in 1-second chunks
@@ -245,6 +245,12 @@ count, a minimize button (`#hp-todo-min`, collapses the panel), and a hamburger 
     the script mirrors the `hp_*` keys there and restores any missing key on startup (the init
     is `async` and awaits the restore before building the UI). `localStorage` stays the working
     store so all reads remain synchronous.
+
+16. **The todo search's Enter auto-decides code vs subject.** A numeric query is treated as a
+    code: it opens the exact/partial match from the list, or falls back to a platform search by
+    code (so it works for tickets not in the list). A query with letters is a general platform
+    search by subject and never auto-opens a ticket, since the user may just be exploring results.
+    Both paths share `ensureListReady()` (also used by `openTicket`) so they work from any view.
 
 ## Gotchas / notes for future agents
 
