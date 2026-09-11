@@ -82,6 +82,7 @@ Opening a ticket shows a detail view with:
   when the app resets the view to grilla.
 - `todoWidget` — the floating todo-list widget.
 - `tallerDescription` — removes the OT "Descripción" height cap.
+- `backupTodo` — mirrors the `hp_*` keys to IndexedDB and restores them if `localStorage` is wiped.
 
 ### localStorage keys owned by the userscript
 
@@ -91,6 +92,17 @@ Opening a ticket shows a detail view with:
 - `hp_todo_tabs` — array of `{ id, name }` (the tab list; the first entry is the fallback tab).
 - `hp_todo_tab_active` — the id of the currently selected tab.
 - `hp_todo_width` — the todo panel's saved width (px).
+
+### Backup / restore (IndexedDB)
+
+The HelpPeople app **clears `localStorage` when it closes the session** (e.g. after the login
+times out), which would wipe `hp_todo` and friends. The script therefore mirrors all `hp_*` keys
+to IndexedDB (db `hp_mejoras`, store `kv`, key `snapshot`), which `localStorage.clear()` does not
+touch, and restores any key that is missing on startup (before the widget is set up). Backups are
+debounced after each `save()` and also run periodically / on `pagehide`. `backupNow()` skips
+writing when `hp_todo` is absent, so a transient cleared state (right after logout) can't
+overwrite the last good snapshot; a 5s watchdog also restores + re-renders if the app clears the
+keys mid-session.
 
 ## Key DOM selectors used by the script
 
@@ -223,6 +235,13 @@ count, a minimize button (`#hp-todo-min`, collapses the panel), and a hamburger 
     legacy items (no `tab` field) and items from a deleted tab are never orphaned. New
     auto-added tickets go to the first tab, and opening a ticket switches the active tab to the
     one holding it (or the first tab for a new ticket).
+
+15. **The todo data is backed up to IndexedDB because the app clears `localStorage` on
+    logout.** A userscript only has page-origin storage, and the app wipes `localStorage` when
+    the session ends. IndexedDB is a different store on the same origin that survives that, so
+    the script mirrors the `hp_*` keys there and restores any missing key on startup (the init
+    is `async` and awaits the restore before building the UI). `localStorage` stays the working
+    store so all reads remain synchronous.
 
 ## Gotchas / notes for future agents
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelpPeople Mejoras
 // @namespace    helppeople
-// @version      1.0
+// @version      1.1
 // @description  Extensión de funcionalidades para HelpPeople
 // @updateURL    https://raw.githubusercontent.com/nijamaDev/hp-scripts/main/helppeople.user.js
 // @downloadURL  https://raw.githubusercontent.com/nijamaDev/hp-scripts/main/helppeople.user.js
@@ -10,13 +10,16 @@
 // @grant        none
 // ==/UserScript==
 
-(function () {
+(async function () {
   'use strict';
 
   // ============================================================
   // CONFIGURACIÓN DE FUNCIONES - Coloca en "false" las funciones a desactivar
   // ============================================================
   const CONFIG = {
+    // Respalda los tickets en IndexedDB y los restaura si se borra el localStorage
+    backupTodo: true,
+
     // Por defecto, el buscador usa "Por código" en lugar de "Por asunto"
     defaultSearchByCode: true,
 
@@ -51,6 +54,7 @@
   ];
 
   let suppressView = false;
+  let todoRender = null;
 
   const qa = (sel) => Array.from(document.querySelectorAll(sel));
   const q = (sel) => document.querySelector(sel);
@@ -72,6 +76,85 @@
   }
   function save(key, val) {
     localStorage.setItem(key, JSON.stringify(val));
+    scheduleBackup();
+  }
+
+  // ---------- respaldo en IndexedDB ----------
+  // La app borra su localStorage al cerrar sesión, y con él se perderían los
+  // tickets. Guardamos una copia en IndexedDB (que no le afecta) y la
+  // restauramos al iniciar si las claves no están.
+  const BACKUP_KEYS = [KEY_STATE, KEY_TODO, KEY_TAGS, KEY_TABS, KEY_TAB_ACTIVE, 'hp_todo_width'];
+  const BACKUP_DB = 'hp_mejoras';
+  const BACKUP_STORE = 'kv';
+
+  function idbOpen() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(BACKUP_DB, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(BACKUP_STORE)) db.createObjectStore(BACKUP_STORE);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  async function idbSet(key, val) {
+    try {
+      const db = await idbOpen();
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(BACKUP_STORE, 'readwrite');
+        tx.objectStore(BACKUP_STORE).put(val, key);
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+      });
+      db.close();
+    } catch (e) {}
+  }
+  async function idbGet(key) {
+    try {
+      const db = await idbOpen();
+      const val = await new Promise((resolve, reject) => {
+        const tx = db.transaction(BACKUP_STORE, 'readonly');
+        const r = tx.objectStore(BACKUP_STORE).get(key);
+        r.onsuccess = () => resolve(r.result);
+        r.onerror = () => reject(r.error);
+      });
+      db.close();
+      return val;
+    } catch (e) {
+      return null;
+    }
+  }
+  function backupNow() {
+    if (!CONFIG.backupTodo || typeof indexedDB === 'undefined') return;
+    // Si los tickets no están (p. ej. justo tras cerrar sesión), conserva el
+    // último respaldo bueno en vez de sobrescribirlo con un estado vacío.
+    if (localStorage.getItem(KEY_TODO) === null) return;
+    const snap = { savedAt: Date.now() };
+    for (const k of BACKUP_KEYS) snap[k] = localStorage.getItem(k);
+    idbSet('snapshot', snap);
+  }
+  let backupTimer = null;
+  function scheduleBackup() {
+    if (!CONFIG.backupTodo) return;
+    if (backupTimer) return;
+    backupTimer = setTimeout(() => {
+      backupTimer = null;
+      backupNow();
+    }, 800);
+  }
+  async function restoreBackup() {
+    if (!CONFIG.backupTodo || typeof indexedDB === 'undefined') return false;
+    const snap = await idbGet('snapshot');
+    if (!snap || snap[KEY_TODO] == null) return false;
+    let restored = false;
+    for (const k of BACKUP_KEYS) {
+      if (localStorage.getItem(k) === null && snap[k] != null) {
+        localStorage.setItem(k, snap[k]);
+        restored = true;
+      }
+    }
+    return restored;
   }
 
   // ---------- funciones auxiliares del DOM compartidas ----------
@@ -1272,15 +1355,33 @@
     });
     observer.observe(document.body, { childList: true, subtree: true });
 
+    todoRender = render;
     render();
   }
 
   // ---------- inicio ----------
+  if (CONFIG.backupTodo) await restoreBackup();
   if (CONFIG.persistModule) setupPersistModule();
   if (CONFIG.defaultSearchByCode) setupDefaultSearchByCode();
   if (CONFIG.persistView) setupPersistView();
   if (CONFIG.todoWidget) setupTodoWidget();
   if (CONFIG.tallerDescription) setupTallerDescription();
+
+  if (CONFIG.backupTodo) {
+    backupNow();
+    setInterval(backupNow, 15000);
+    // Si la app borra el localStorage en caliente (sin recargar), restaura y redibuja.
+    setInterval(async () => {
+      if (localStorage.getItem(KEY_TODO) === null) {
+        const restored = await restoreBackup();
+        if (restored && todoRender) todoRender();
+      }
+    }, 5000);
+    window.addEventListener('pagehide', backupNow);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') backupNow();
+    });
+  }
 
   if (CONFIG.persistModule) {
     let attempts = 0;
