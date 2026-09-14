@@ -90,6 +90,7 @@ Opening a ticket shows a detail view with:
 - `hp_todo_tabs` — array of `{ id, name }` (the tab list; the first entry is the fallback tab).
 - `hp_todo_tab_active` — the id of the currently selected tab.
 - `hp_todo_width` — the todo panel's saved width (px).
+- `hp_todo_height` — the todo panel's saved height (px).
 
 ### Backup / restore (IndexedDB)
 
@@ -132,12 +133,16 @@ count, a minimize button (`#hp-todo-min`, collapses the panel), and a hamburger 
   heading (cleared when the detail view closes).
 - Removing the open ticket from the list exits the ticket (clicks the app's back arrow).
 - Per-item: priority dot+label, tag chips, a tag menu (circle/dot icon), and a remove button.
-- Search box filters by code/subject across **all tabs** (the tab bar is hidden while a query is
-  present). On Enter: a **numeric** query opens the matching ticket (exact or partial match in the
-  list, else searched by code on the platform); a query with **letters** runs a *subject* search on
-  the platform and does **not** open a ticket.
+- Search box filters by code/subject/**tag** across **all tabs** (the tab bar is hidden while a
+  query is present). On Enter: a **numeric** query opens the matching ticket (exact or partial
+  match in the list, else searched by code on the platform); a query with **letters** runs a
+  *subject* search on the platform and does **not** open a ticket.
 - HTML5 drag-and-drop reordering (live "make space" on `dragover`) with a semi-transparent drag
   image so the landing gap stays visible.
+- Ctrl/Cmd+click toggles an item's selection (blue `.selected` background); Shift+click selects
+  the range from the last-clicked anchor. Dragging a selected item drags the whole selection, so
+  several tickets can be dropped onto a tab at once (reordering is single-item only). Clicking
+  anywhere outside the list (or a normal click) clears the selection.
 - **Tabs** (`#hp-todo-tabs`): a horizontal bar under the header. The first tab is the fallback.
   - Click a tab to filter the list; drag a list item onto a tab to move it there.
   - Double-click a tab name to rename it; the `+` button (`#hp-tab-add`) adds a tab and
@@ -147,7 +152,8 @@ count, a minimize button (`#hp-todo-min`, collapses the panel), and a hamburger 
   - Opening a ticket (however it was opened) switches to the tab that contains it, or to the
     first tab when it's a new ticket. This only fires when the open ticket *changes*, so you can
     switch tabs freely afterwards without it snapping back.
-- Right-edge resize handle; width persisted in `hp_todo_width`.
+- Resize handles: right edge (width, saved in `hp_todo_width`) and top edge (height, saved in
+  `hp_todo_height`).
 - **Options menu** (`#hp-todo-gear` → `#hp-todo-menu`): "Exportar datos" / "Importar datos".
   - Export downloads `helppeople-todo-YYYY-MM-DD.json` containing `{version, exportedAt, todos, tags, tabs}`.
   - Import merges by code (existing tickets get subject/priority/tags updated; new ones appended)

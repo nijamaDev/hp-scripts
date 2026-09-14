@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelpPeople Mejoras
 // @namespace    helppeople
-// @version      1.3
+// @version      1.4
 // @description  Extensión de funcionalidades para HelpPeople
 // @updateURL    https://raw.githubusercontent.com/nijamaDev/hp-scripts/main/helppeople.user.js
 // @downloadURL  https://raw.githubusercontent.com/nijamaDev/hp-scripts/main/helppeople.user.js
@@ -78,7 +78,7 @@
   // La app borra su localStorage al cerrar sesión, y con él se perderían los
   // tickets. Guardamos una copia en IndexedDB (que no le afecta) y la
   // restauramos al iniciar si las claves no están.
-  const BACKUP_KEYS = [KEY_STATE, KEY_TODO, KEY_TAGS, KEY_TABS, KEY_TAB_ACTIVE, 'hp_todo_width'];
+  const BACKUP_KEYS = [KEY_STATE, KEY_TODO, KEY_TAGS, KEY_TABS, KEY_TAB_ACTIVE, 'hp_todo_width', 'hp_todo_height'];
   const BACKUP_DB = 'hp_mejoras';
   const BACKUP_STORE = 'kv';
 
@@ -451,6 +451,8 @@
       '.hp-todo-item:hover{background:#f5f5f5;}',
       '.hp-todo-item.active{background:#e8f8ee;}',
       '.hp-todo-item.active:hover{background:#d9f2e3;}',
+      '.hp-todo-item.selected{background:#e6f4ff;}',
+      '.hp-todo-item.selected:hover{background:#d4e8ff;}',
       '.hp-todo-item.dragging{opacity:0.5;}',
       '.hp-code{font-weight:700;color:#1677ff;flex-shrink:0;font-size:13px;}',
       '.hp-subject{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#444;font-size:13px;}',
@@ -491,6 +493,8 @@
       '#hp-todo-search:focus{border-color:#1677ff;}',
       '.hp-resize-handle{position:absolute;top:0;right:0;bottom:0;width:6px;cursor:ew-resize;}',
       '.hp-resize-handle:hover{background:rgba(22,119,255,0.15);}',
+      '.hp-resize-handle-top{position:absolute;top:0;left:0;right:6px;height:6px;cursor:ns-resize;}',
+      '.hp-resize-handle-top:hover{background:rgba(22,119,255,0.15);}',
     ].join('\n');
     document.head.appendChild(style);
 
@@ -513,6 +517,7 @@
       '<ul id="hp-todo-list"></ul>' +
       '<div id="hp-todo-hint" class="hidden"></div>' +
       '<div id="hp-todo-footer"><input id="hp-todo-search" type="text" placeholder="Buscar código o asunto..."></div>' +
+      '<div class="hp-resize-handle-top"></div>' +
       '<div class="hp-resize-handle"></div>' +
       '</div>' +
       '<button id="hp-todo-fab" title="Tickets">' +
@@ -670,7 +675,41 @@
         return;
       }
       const item = e.target.closest('li.hp-todo-item');
-      if (item) openTicket(item.dataset.code);
+      if (!item) return;
+      const code = item.dataset.code;
+      if (e.ctrlKey || e.metaKey) {
+        // Ctrl/Cmd + click: alterna la selección del item.
+        if (selectedCodes.has(code)) selectedCodes.delete(code);
+        else selectedCodes.add(code);
+        selAnchor = code;
+        applySelection();
+        return;
+      }
+      if (e.shiftKey && selAnchor) {
+        // Shift + click: selecciona el rango entre el ancla y el item.
+        const codes = qa('#hp-todo-list li').map((li) => li.dataset.code);
+        const a = codes.indexOf(selAnchor);
+        const b = codes.indexOf(code);
+        if (a >= 0 && b >= 0) {
+          selectedCodes = new Set(codes.slice(Math.min(a, b), Math.max(a, b) + 1));
+          applySelection();
+        }
+        return;
+      }
+      // Click normal: limpia la selección y abre el ticket.
+      selectedCodes.clear();
+      selAnchor = code;
+      applySelection();
+      openTicket(code);
+    });
+
+    // Al hacer click fuera de los items de la lista, se limpia la selección.
+    document.addEventListener('click', (e) => {
+      if (!selectedCodes.size) return;
+      if (e.target.closest('#hp-todo-list li.hp-todo-item')) return;
+      selectedCodes.clear();
+      selAnchor = null;
+      applySelection();
     });
 
     function currentQuery() {
@@ -678,7 +717,9 @@
       return inp ? inp.value.trim().toLowerCase() : '';
     }
     function matches(query, t) {
-      return t.code.includes(query) || (t.subject || '').toLowerCase().includes(query);
+      if (t.code.includes(query)) return true;
+      if ((t.subject || '').toLowerCase().includes(query)) return true;
+      return (t.tags || []).some((name) => (name || '').toLowerCase().includes(query));
     }
     function updateHint() {
       const hint = q('#hp-todo-hint');
@@ -710,6 +751,14 @@
     function applyActiveHighlight() {
       qa('#hp-todo-list li').forEach((li) => {
         li.classList.toggle('active', li.dataset.code === activeTicketCode);
+      });
+    }
+
+    let selectedCodes = new Set();
+    let selAnchor = null;
+    function applySelection() {
+      qa('#hp-todo-list li').forEach((li) => {
+        li.classList.toggle('selected', selectedCodes.has(li.dataset.code));
       });
     }
 
@@ -774,7 +823,7 @@
           });
         }
         el.addEventListener('dragover', (e) => {
-          if (!dragCode) return;
+          if (!dragCodes.length) return;
           e.preventDefault();
           e.dataTransfer.dropEffect = 'move';
           el.classList.add('drop-target');
@@ -783,7 +832,7 @@
         el.addEventListener('drop', (e) => {
           e.preventDefault();
           el.classList.remove('drop-target');
-          if (dragCode) assignToTab(dragCode, tab.id);
+          if (dragCodes.length) assignToTab(dragCodes, tab.id);
         });
         bar.appendChild(el);
       });
@@ -870,12 +919,20 @@
       input.addEventListener('click', (e) => e.stopPropagation());
       input.addEventListener('dblclick', (e) => e.stopPropagation());
     }
-    function assignToTab(code, tabId) {
+    function assignToTab(codes, tabId) {
       const list = loadArr(KEY_TODO);
-      const item = list.find((t) => t.code === code);
-      if (!item) return;
-      item.tab = tabId;
-      save(KEY_TODO, list);
+      const arr = Array.isArray(codes) ? codes : [codes];
+      let changed = false;
+      arr.forEach((code) => {
+        const item = list.find((t) => t.code === code);
+        if (item && itemTab(item) !== tabId) {
+          item.tab = tabId;
+          changed = true;
+        }
+      });
+      if (changed) save(KEY_TODO, list);
+      selectedCodes.clear();
+      selAnchor = null;
       activeTabId = tabId;
       localStorage.setItem(KEY_TAB_ACTIVE, tabId);
       render();
@@ -926,6 +983,7 @@
       if (count) count.textContent = all.length;
       updateHint();
       applyActiveHighlight();
+      applySelection();
     }
 
     function upsertTodo(code, subject, priority) {
@@ -964,11 +1022,19 @@
 
     // Reordenar arrastrando y soltando, dejando hueco en vivo
     let dragCode = null;
+    let dragCodes = [];
     listEl.addEventListener('dragstart', (e) => {
       const item = e.target.closest('li.hp-todo-item');
       if (!item) return;
       dragCode = item.dataset.code;
-      item.classList.add('dragging');
+      dragCodes = selectedCodes.has(dragCode) && selectedCodes.size > 1 ? [...selectedCodes] : [dragCode];
+      if (dragCodes.length > 1) {
+        qa('#hp-todo-list li').forEach((li) => {
+          if (dragCodes.includes(li.dataset.code)) li.classList.add('dragging');
+        });
+      } else {
+        item.classList.add('dragging');
+      }
       e.dataTransfer.effectAllowed = 'move';
       try {
         e.dataTransfer.setData('text/plain', dragCode);
@@ -1032,6 +1098,8 @@
     listEl.addEventListener('dragover', (e) => {
       e.preventDefault();
       e.dataTransfer.dropEffect = 'move';
+      // Con varios items seleccionados no se reordena en vivo (solo se sueltan en pestañas).
+      if (dragCodes.length > 1) return;
       const target = e.target.closest('li.hp-todo-item');
       if (!target || !dragCode || target.dataset.code === dragCode) return;
       const rect = target.getBoundingClientRect();
@@ -1057,10 +1125,10 @@
       e.preventDefault();
     });
     listEl.addEventListener('dragend', () => {
-      const item = listEl.querySelector('li.dragging');
-      if (item) item.classList.remove('dragging');
+      qa('#hp-todo-list li.dragging').forEach((li) => li.classList.remove('dragging'));
       qa('.hp-tab.drop-target').forEach((el) => el.classList.remove('drop-target'));
       dragCode = null;
+      dragCodes = [];
     });
 
     // Redimensionar en horizontal
@@ -1081,6 +1149,34 @@
       };
       const onUp = () => {
         localStorage.setItem('hp_todo_width', String(panelWidth));
+        document.removeEventListener('pointermove', onMove);
+        document.removeEventListener('pointerup', onUp);
+      };
+      document.addEventListener('pointermove', onMove);
+      document.addEventListener('pointerup', onUp);
+    });
+
+    // Redimensionar en vertical (borde superior)
+    let panelHeight = parseInt(localStorage.getItem('hp_todo_height'), 10) || 0;
+    function applyPanelHeight() {
+      const panel = q('#hp-todo-panel');
+      if (!panel || panelHeight <= 0) return;
+      panel.style.maxHeight = 'none';
+      panel.style.height = Math.min(panelHeight, window.innerHeight - 80) + 'px';
+    }
+    applyPanelHeight();
+    const handleTop = q('.hp-resize-handle-top');
+    handleTop.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      const panel = q('#hp-todo-panel');
+      const startY = e.clientY;
+      const startH = panel.getBoundingClientRect().height;
+      const onMove = (ev) => {
+        panelHeight = Math.max(160, Math.min(window.innerHeight - 80, startH + (startY - ev.clientY)));
+        applyPanelHeight();
+      };
+      const onUp = () => {
+        localStorage.setItem('hp_todo_height', String(panelHeight));
         document.removeEventListener('pointermove', onMove);
         document.removeEventListener('pointerup', onUp);
       };
