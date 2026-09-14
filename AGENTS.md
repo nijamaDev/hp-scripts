@@ -154,7 +154,26 @@ count, a minimize button (`#hp-todo-min`, collapses the panel), and a hamburger 
     switch tabs freely afterwards without it snapping back.
 - Resize handles: right edge (width, saved in `hp_todo_width`) and top edge (height, saved in
   `hp_todo_height`).
-- **Options menu** (`#hp-todo-gear` → `#hp-todo-menu`): "Exportar datos" / "Importar datos".
+- **Options menu** (`#hp-todo-gear` → `#hp-todo-menu`): "Exportar datos" / "Importar datos" /
+  "Tutorial": a hands-on guided tour with a clean list. It saves the real `hp_*` state to IndexedDB
+  (`tour_backup`), swaps in an **empty list** (and no tags), and walks the user through 8 steps:
+  welcome → open a ticket → open a second → create a tab → move tickets to it → create a tag →
+  remove the tickets → done. Each step spotlights a control and auto-advances once the user performs
+  the action (a `done()` predicate); a step may also have a `show()` hook (step 3 returns to the
+  list and clears filters; step 5 switches back to the first tab so there is something to drag).
+  Steps can set `placement` for the popover (steps 2/3 use `right` so it doesn't cover the table;
+  steps 4/5 use `top` so it doesn't cover the tickets; step 5 also highlights the whole panel, i.e.
+  tabs + tickets). Targets can be dynamic functions (step 3
+  spotlights the first row not already in the list; the tag step follows the tag menu once it opens).
+  If the user presses **Siguiente** without
+  doing the step, the step's `auto()` does it for them first (opens a real ticket — step 3 goes
+  back, clears filters and searches by code — creates the tab, moves the tickets, creates the
+  "Ejemplo" tag and assigns it, and removes the tickets). While a step is being auto-completed — or
+  right after it's detected as done — the **Siguiente** button is disabled and shows a spinner, so
+  it can't be pressed twice. **Anterior** rewinds to the state as it was *before the step you land
+  on* (reset that step so it can be redone), undoing the changes of the steps you leave behind.
+  Closing it restores the original state; opening it resets the popover so the previous run's last
+  message can't flash. Texts are neutral Spanish (uses "click", not "clic").
   - Export downloads `helppeople-todo-YYYY-MM-DD.json` containing `{version, exportedAt, todos, tags, tabs}`.
   - Import merges by code (existing tickets get subject/priority/tags updated; new ones appended)
     and registers new tags/tabs without touching existing ones.
@@ -257,6 +276,24 @@ count, a minimize button (`#hp-todo-min`, collapses the panel), and a hamburger 
     code (so it works for tickets not in the list). A query with letters is a general platform
     search by subject and never auto-opens a ticket, since the user may just be exploring results.
     Both paths share `ensureListReady()` (also used by `openTicket`) so they work from any view.
+
+17. **The tutorial is a hands-on tour with a clean list.** On open it backs up the real `hp_*`
+    keys to IndexedDB (`tour_backup`), clears `hp_todo`/tabs to start empty, and guides the user to
+    open tickets, create a tab, move tickets, create a tag and remove them; each step auto-advances
+    when its `done()` predicate is met. Pressing **Siguiente** without completing the step runs the
+    step's `auto()` first, so the user is never stuck and can't skip a step silently. Some steps add
+    a `show()` hook that prepares the UI when the step appears (step 5 returns to the first tab so
+    the tickets are visible to drag). Every step snapshots the tour state (`hp_todo`/`hp_tags`/
+    `hp_tabs`/`hp_tab_active`) on arrival, so **Anterior** restores the snapshot taken *before the
+    step you return to* (rewinding past the steps you leave behind), leaving that step ready to
+    redo. `enterTourMode()` forces a fresh
+    `snapshot` *before* clearing,
+    and `exitTourMode()` falls back to restoring the snapshot if the tour backup is gone, so a tour
+    can never shrink the list. `exitTourMode()` also closes the open ticket detail *before*
+    restoring, so the todo `MutationObserver` can't re-add the open ticket to the restored list. On
+    exit — or on the next page load, via `restoreTourBackup()` in `init` — the original state is
+    restored. `backupNow()` is paused during the tour **and** refuses to overwrite a non-empty
+    snapshot with an empty list, so the real backup can't be clobbered.
 
 ## Gotchas / notes for future agents
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelpPeople Mejoras
 // @namespace    helppeople
-// @version      1.4
+// @version      1.5
 // @description  Extensión de funcionalidades para HelpPeople
 // @updateURL    https://raw.githubusercontent.com/nijamaDev/hp-scripts/main/helppeople.user.js
 // @downloadURL  https://raw.githubusercontent.com/nijamaDev/hp-scripts/main/helppeople.user.js
@@ -120,31 +120,67 @@
       return null;
     }
   }
-  function backupNow() {
-    if (!CONFIG.todoWidget || typeof indexedDB === 'undefined') return;
-    // Si los tickets no están (p. ej. justo tras cerrar sesión), conserva el
-    // último respaldo bueno en vez de sobrescribirlo con un estado vacío.
-    if (localStorage.getItem(KEY_TODO) === null) return;
+  let tourActive = false;
+  async function saveTourBackup() {
+    const snap = {};
+    for (const k of BACKUP_KEYS) snap[k] = localStorage.getItem(k);
+    await idbSet('tour_backup', snap);
+  }
+  async function restoreTourBackup() {
+    const snap = await idbGet('tour_backup');
+    if (!snap) return false;
+    for (const k of BACKUP_KEYS) {
+      if (snap[k] == null) localStorage.removeItem(k);
+      else localStorage.setItem(k, snap[k]);
+    }
+    await idbSet('tour_backup', null);
+    return true;
+  }
+  async function backupNow() {
+    if (!CONFIG.todoWidget || typeof indexedDB === 'undefined' || tourActive) return;
+    const todoRaw = localStorage.getItem(KEY_TODO);
+    // Si los tickets no están (p. ej. justo tras cerrar sesión), conserva el último respaldo.
+    if (todoRaw === null) return;
+    // No sobrescribir un respaldo con datos por una lista vacía/transitoria.
+    let empty = false;
+    try {
+      empty = JSON.parse(todoRaw).length === 0;
+    } catch (e) {
+      empty = true;
+    }
+    if (empty) {
+      const existing = await idbGet('snapshot');
+      let existingCount = 0;
+      try {
+        existingCount = existing && existing[KEY_TODO] ? JSON.parse(existing[KEY_TODO]).length : 0;
+      } catch (e) {
+        existingCount = 0;
+      }
+      if (existingCount > 0) return;
+    }
     const snap = { savedAt: Date.now() };
     for (const k of BACKUP_KEYS) snap[k] = localStorage.getItem(k);
     idbSet('snapshot', snap);
   }
   let backupTimer = null;
   function scheduleBackup() {
-    if (!CONFIG.todoWidget) return;
+    if (!CONFIG.todoWidget || tourActive) return;
     if (backupTimer) return;
     backupTimer = setTimeout(() => {
       backupTimer = null;
       backupNow();
     }, 800);
   }
-  async function restoreBackup() {
+  async function restoreBackup(force) {
     if (!CONFIG.todoWidget || typeof indexedDB === 'undefined') return false;
+    if (tourActive && !force) return false;
     const snap = await idbGet('snapshot');
-    if (!snap || snap[KEY_TODO] == null) return false;
+    if (!snap) return false;
+    if (!force && snap[KEY_TODO] == null) return false;
     let restored = false;
     for (const k of BACKUP_KEYS) {
-      if (localStorage.getItem(k) === null && snap[k] != null) {
+      if (snap[k] == null) continue;
+      if (force || localStorage.getItem(k) === null) {
         localStorage.setItem(k, snap[k]);
         restored = true;
       }
@@ -433,6 +469,24 @@
       '#hp-todo-menu.hidden{display:none;}',
       '#hp-todo-menu .m-item{padding:6px 10px;border-radius:4px;cursor:pointer;font-size:13px;color:#333;}',
       '#hp-todo-menu .m-item:hover{background:#f5f5f5;}',
+      '#hp-tour{position:fixed;inset:0;z-index:2147483647;pointer-events:none;}',
+      '#hp-tour.hidden{display:none;}',
+      '#hp-tour-spotlight{position:fixed;border-radius:8px;box-shadow:0 0 0 9999px rgba(0,0,0,.55);pointer-events:none;transition:top .15s,left .15s,width .15s,height .15s;}',
+      '#hp-tour-pop{position:fixed;pointer-events:auto;width:300px;max-width:calc(100vw - 24px);background:#fff;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.35);padding:14px 16px;}',
+      '#hp-tour-pop .tour-title{font-weight:700;color:#1677ff;font-size:14px;margin-bottom:4px;padding-right:16px;}',
+      '#hp-tour-pop .tour-text{font-size:13px;color:#444;line-height:1.45;}',
+      '#hp-tour-pop .tour-hint{font-size:11px;color:#52c41a;margin-top:6px;}',
+      '#hp-tour-pop .tour-foot{display:flex;align-items:center;justify-content:space-between;margin-top:12px;}',
+      '#hp-tour-pop .tour-count{font-size:12px;color:#999;}',
+      '#hp-tour-pop .tour-btns{display:flex;gap:8px;}',
+      '#hp-tour-pop .tour-btns button{border:1px solid #d9d9d9;background:#fff;border-radius:6px;padding:4px 12px;font-size:12px;cursor:pointer;color:#333;}',
+      '#hp-tour-pop .tour-btns .tour-next{background:#1677ff;border-color:#1677ff;color:#fff;}',
+      '#hp-tour-pop .tour-btns .tour-next.tour-done{background:#52c41a;border-color:#52c41a;}',
+      '#hp-tour-pop .tour-btns .tour-next.tour-loading{position:relative;color:transparent;min-width:64px;cursor:default;}',
+      '#hp-tour-pop .tour-btns .tour-next.tour-loading::after{content:"";position:absolute;top:50%;left:50%;width:12px;height:12px;margin:-7px 0 0 -7px;border:2px solid rgba(255,255,255,.5);border-top-color:#fff;border-radius:50%;animation:hp-tour-spin .7s linear infinite;}',
+      '@keyframes hp-tour-spin{to{transform:rotate(360deg);}}',
+      '#hp-tour-pop .tour-skip{position:absolute;top:8px;right:10px;border:none;background:none;color:#bbb;font-size:16px;cursor:pointer;padding:0 2px;line-height:1;}',
+      '#hp-tour-pop .tour-skip:hover{color:#333;}',
       '#hp-todo-tabs{display:flex;align-items:center;gap:4px;padding:6px 8px;border-bottom:1px solid #f0f0f0;background:#fafafa;overflow-x:auto;flex-shrink:0;}',
       '.hp-tab{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:6px;border:1px solid #e8e8e8;background:#fff;cursor:pointer;font-size:12px;color:#555;white-space:nowrap;user-select:none;flex-shrink:0;}',
       '.hp-tab:hover{background:#f5f5f5;}',
@@ -537,6 +591,17 @@
       '<div id="hp-todo-menu" class="hidden">' +
       '<div class="m-item" id="hp-export-btn">Exportar datos</div>' +
       '<div class="m-item" id="hp-import-btn">Importar datos</div>' +
+      '<div class="m-item" id="hp-tutorial-btn">Tutorial</div>' +
+      '</div>' +
+      '<div id="hp-tour" class="hidden">' +
+      '<div id="hp-tour-spotlight"></div>' +
+      '<div id="hp-tour-pop">' +
+      '<button class="tour-skip" id="hp-tour-skip" title="Cerrar">&times;</button>' +
+      '<div class="tour-title"></div>' +
+      '<div class="tour-text"></div>' +
+      '<div class="tour-hint"></div>' +
+      '<div class="tour-foot"><span class="tour-count"></span><span class="tour-btns"><button id="hp-tour-prev">Anterior</button><button class="tour-next" id="hp-tour-next">Siguiente</button></span></div>' +
+      '</div>' +
       '</div>';
     document.body.appendChild(root);
 
@@ -661,6 +726,527 @@
     }
     q('#hp-export-btn').addEventListener('click', exportTodoData);
     q('#hp-import-btn').addEventListener('click', importTodoFile);
+
+    // ---- tutorial (tour guiado y práctico) ----
+    const tourEl = q('#hp-tour');
+    const tourSpot = q('#hp-tour-spotlight');
+    const tourPop = q('#hp-tour-pop');
+    const tourPrev = q('#hp-tour-prev');
+    const tourNext = q('#hp-tour-next');
+    let tourSteps = [];
+    let tourIndex = 0;
+    let tourPoll = null;
+    let tourBusy = false;
+    let tourSnaps = [];
+
+    function stopTourPoll() {
+      if (tourPoll) {
+        clearInterval(tourPoll);
+        tourPoll = null;
+      }
+    }
+    // Mientras el paso se completa o se está auto-ejecutando, el botón queda
+    // deshabilitado y con un spinner (para que no se haga click de más).
+    function setTourNextBusy(busy, done) {
+      tourNext.disabled = !!busy;
+      tourNext.classList.toggle('tour-done', !!done);
+      tourNext.classList.toggle('tour-loading', !!busy);
+      tourNext.textContent = busy ? '' : tourNextLabel();
+    }
+    function startTourPoll(i) {
+      stopTourPoll();
+      const step = tourSteps[i];
+      if (!step || typeof step.done !== 'function') return;
+      let alreadyDone = false;
+      try {
+        alreadyDone = !!step.done();
+      } catch (e) {
+        alreadyDone = false;
+      }
+      // Si el paso ya está cumplido (p. ej. al volver con "Anterior"), no
+      // auto-avanzar: dejamos que el usuario siga cuando quiera.
+      if (alreadyDone) return;
+      tourPoll = setInterval(() => {
+        if (tourIndex !== i) return;
+        try {
+          updateSpotlight(step);
+        } catch (e) {}
+        let ok = false;
+        try {
+          ok = step.done();
+        } catch (e) {
+          ok = false;
+        }
+        if (!ok) return;
+        stopTourPoll();
+        setTourNextBusy(true, true);
+        setTimeout(() => {
+          if (tourIndex === i) advanceTour(1);
+        }, 900);
+      }, 400);
+    }
+    // Abre un ticket real de la tabla (sale del detalle si hace falta y evita
+    // los códigos indicados en `skip`). Devuelve el código abierto o null.
+    async function autoOpenTicket(skip) {
+      const omit = Array.isArray(skip) ? skip : [];
+      const inDetail = () => qa('h3').some((h) => /Detalle de solicitud/.test(h.textContent));
+      if (inDetail()) {
+        const back = q('.anticon-arrow-left');
+        if (back) back.click();
+        await sleep(1200);
+      }
+      try {
+        await clearFilters();
+      } catch (e) {}
+      let code = null;
+      for (let attempt = 0; attempt < 4 && !inDetail(); attempt++) {
+        await waitFor(() => qa('tr.ant-table-row').length > 0, 3000, 150);
+        const rows = qa('tr.ant-table-row');
+        let row = rows.find((r) => !omit.includes(r.dataset.rowKey));
+        if (!row) row = rows[0];
+        if (!row) {
+          await sleep(500);
+          continue;
+        }
+        code = row.dataset.rowKey;
+        row.click();
+        await waitFor(() => inDetail(), 3000, 150);
+        if (!inDetail()) await sleep(400);
+      }
+      if (code) await waitFor(() => loadArr(KEY_TODO).some((t) => t.code === code), 4000, 150);
+      return code;
+    }
+    // Vuelve atrás si hace falta y abre un segundo ticket buscándolo por su
+    // número (usa el flujo real de búsqueda por código).
+    async function autoOpenSecond() {
+      const inDetail = () => qa('h3').some((h) => /Detalle de solicitud/.test(h.textContent));
+      if (inDetail()) {
+        const back = q('.anticon-arrow-left');
+        if (back) back.click();
+        await sleep(1200);
+      }
+      try {
+        await clearFilters();
+      } catch (e) {}
+      if (!(await waitFor(() => qa('tr.ant-table-row').length > 0, 5000, 200))) return;
+      const skip = loadArr(KEY_TODO).map((t) => t.code);
+      const row = qa('tr.ant-table-row').find((r) => !skip.includes(r.dataset.rowKey));
+      const code = row ? row.dataset.rowKey : null;
+      if (code) {
+        await openTicket(code);
+        await waitFor(() => loadArr(KEY_TODO).some((t) => t.code === code), 5000, 150);
+      }
+    }
+    async function enterTourMode() {
+      // Asegura el respaldo principal con los datos reales antes de limpiar.
+      await backupNow();
+      tourActive = true;
+      await saveTourBackup();
+      // Lista limpia para practicar (se restaura al salir).
+      localStorage.setItem(KEY_TODO, JSON.stringify([]));
+      localStorage.setItem(KEY_TAGS, JSON.stringify([]));
+      localStorage.setItem(KEY_TABS, JSON.stringify([{ id: 'tab-default', name: 'General' }]));
+      localStorage.setItem(KEY_TAB_ACTIVE, 'tab-default');
+      selectedCodes.clear();
+      selAnchor = null;
+      activeTabId = 'tab-default';
+      closeTagMenu();
+      const si = q('#hp-todo-search');
+      if (si) si.value = '';
+      render();
+    }
+    async function exitTourMode() {
+      stopTourPoll();
+      // Cerrar el detalle ANTES de restaurar, para que el observer no vuelva a
+      // agregar el ticket abierto a la lista restaurada.
+      const h3 = qa('h3').find((h) => /Detalle de solicitud/.test(h.textContent));
+      if (h3) {
+        const back = q('.anticon-arrow-left');
+        if (back) back.click();
+        await sleep(700);
+      }
+      let restored = await restoreTourBackup();
+      // Sin respaldo del tour: recupera al menos el respaldo principal.
+      if (!restored) restored = await restoreBackup(true);
+      tourActive = false;
+      selectedCodes.clear();
+      selAnchor = null;
+      activeTabId = localStorage.getItem(KEY_TAB_ACTIVE) || loadTabs()[0].id;
+      panelWidth = parseInt(localStorage.getItem('hp_todo_width'), 10) || 320;
+      applyPanelWidth();
+      panelHeight = parseInt(localStorage.getItem('hp_todo_height'), 10) || 0;
+      applyPanelHeight();
+      closeTagMenu();
+      const si = q('#hp-todo-search');
+      if (si) si.value = '';
+      render();
+      if (restored) backupNow();
+    }
+
+    const TOUR_STEPS = [
+      {
+        target: '#hp-todo-panel',
+        title: '¡Hola! 👋',
+        text: 'Te voy a guiar para que pruebes las funciones con una lista limpia. No te preocupes: al cerrar el tutorial restauro tu lista original. Empecemos.',
+      },
+      {
+        target: () => q('tr.ant-table-row') || q('#hp-todo-list'),
+        placement: 'right',
+        title: 'Abre un ticket',
+        text: 'Haz click en una fila de la tabla (o usa el buscador) para abrir un ticket. Se agregará solo a esta lista.',
+        hint: 'Cuando lo abras, avanzaré solo. Si no, haz click en «Siguiente» y lo abro por ti.',
+        done: () => loadArr(KEY_TODO).length >= 1,
+        auto: () => autoOpenTicket([]),
+      },
+      {
+        target: () => {
+          const opened = loadArr(KEY_TODO).map((t) => t.code);
+          const rows = qa('tr.ant-table-row');
+          const row = rows.find((r) => !opened.includes(r.dataset.rowKey));
+          return row || rows[0] || q('#hp-todo-list');
+        },
+        placement: 'right',
+        title: 'Abre un segundo ticket',
+        text: 'Te devolví a la lista y limpié los filtros. Abre otro ticket distinto; si prefieres, haz click en «Siguiente» y lo abro por ti buscando su número.',
+        hint: 'Cuando tengas dos, avanzaré solo.',
+        show: async () => {
+          const inDetail = () => qa('h3').some((h) => /Detalle de solicitud/.test(h.textContent));
+          if (inDetail()) {
+            const back = q('.anticon-arrow-left');
+            if (back) back.click();
+            await sleep(1100);
+          }
+          try {
+            await clearFilters();
+          } catch (e) {}
+        },
+        done: () => loadArr(KEY_TODO).length >= 2,
+        auto: () => autoOpenSecond(),
+      },
+      {
+        target: '#hp-tab-add',
+        placement: 'top',
+        title: 'Crea una pestaña',
+        text: 'Haz click en el + y escribe un nombre (Enter). Las pestañas sirven para organizar.',
+        hint: 'Cuando la crees, avanzaré solo. Si no, haz click en «Siguiente» y la creo por ti.',
+        done: () => loadTabs().length >= 2,
+        auto: async () => {
+          addTab();
+          await sleep(250);
+          const inp = q('.hp-tab-name-input');
+          if (inp) {
+            inp.value = 'Práctica';
+            inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+          }
+          await sleep(300);
+        },
+      },
+      {
+        target: '#hp-todo-panel',
+        placement: 'top',
+        title: 'Muévelos a tu pestaña',
+        text: 'Te dejo en la pestaña General. Arrastra los tickets (resaltados) hasta tu pestaña nueva. Puedes seleccionar varios con Ctrl/Cmd+click o un rango con Shift+click y arrastrarlos juntos.',
+        hint: 'Cuando muevas al menos uno, avanzaré solo. Si no, haz click en «Siguiente» y los muevo por ti.',
+        show: () => {
+          const tabs = loadTabs();
+          if (tabs[0] && activeTabId !== tabs[0].id) {
+            activeTabId = tabs[0].id;
+            localStorage.setItem(KEY_TAB_ACTIVE, activeTabId);
+            render();
+          }
+        },
+        done: () => {
+          const tabs = loadTabs();
+          return tabs.length >= 2 && loadArr(KEY_TODO).some((t) => itemTab(t) === tabs[1].id);
+        },
+        auto: async () => {
+          const tabs = loadTabs();
+          if (tabs.length < 2) return;
+          const codes = loadArr(KEY_TODO).map((t) => t.code);
+          if (codes.length) assignToTab(codes, tabs[1].id);
+          await sleep(300);
+        },
+      },
+      {
+        target: () => {
+          const menu = q('#hp-tag-menu');
+          if (menu && !menu.classList.contains('hidden')) return menu;
+          return q('#hp-todo-list li.hp-todo-item .hp-todo-menu');
+        },
+        title: 'Etiqueta los tickets',
+        text: 'Pulsa el círculo de un ticket para abrir sus etiquetas. Ahí puedes crear una nueva (nombre + color) y asignarla; es útil para clasificar.',
+        hint: 'Cuando un ticket tenga etiqueta, avanzaré solo. Si no, haz click en «Siguiente» y la creo por ti.',
+        done: () => loadArr(KEY_TODO).some((t) => (t.tags || []).length > 0),
+        auto: async () => {
+          const list = loadArr(KEY_TODO);
+          if (!list.length) return;
+          const code = list[0].code;
+          const li = q('#hp-todo-list li.hp-todo-item');
+          const btn = li ? li.querySelector('.hp-todo-menu') : null;
+          openTagMenu(code, btn);
+          await sleep(250);
+          const nb = q('#hp-tag-new-btn');
+          if (nb) nb.click();
+          await sleep(250);
+          if (tagNameInput) {
+            tagNameInput.value = 'Ejemplo';
+            const save = q('#hp-tag-save');
+            if (save) save.click();
+          }
+          await sleep(250);
+          // Garantiza que la etiqueta quede creada y asignada al ticket.
+          const tags = loadTags();
+          if (!tags.find((t) => t.name === 'Ejemplo')) {
+            saveTags(tags.concat([{ name: 'Ejemplo', color: tagDraftColor || '#1677ff' }]));
+          }
+          const list2 = loadArr(KEY_TODO);
+          const item = list2.find((t) => t.code === code);
+          if (item) {
+            item.tags = item.tags || [];
+            if (!item.tags.includes('Ejemplo')) {
+              item.tags.push('Ejemplo');
+              save(KEY_TODO, list2);
+              render();
+            }
+          }
+          closeTagMenu();
+          await sleep(300);
+        },
+      },
+      {
+        target: '#hp-todo-list li.hp-todo-item .hp-todo-close',
+        title: 'Quita los tickets',
+        text: 'Cuando termines, quita los tickets con la × de cada uno (si está abierto, también saldrá del ticket).',
+        hint: 'Cuando la lista quede vacía, avanzaré solo. Si no, haz click en «Siguiente» y los quito por ti.',
+        done: () => loadArr(KEY_TODO).length === 0,
+        auto: async () => {
+          let guard = 0;
+          while (loadArr(KEY_TODO).length && guard < 20) {
+            guard += 1;
+            await removeTodo(loadArr(KEY_TODO)[0].code);
+            await sleep(200);
+          }
+        },
+      },
+      {
+        target: '#hp-todo-fab',
+        title: '¡Listo!',
+        text: 'Muy bien. Al cerrar este tutorial restauro tu lista original tal como estaba. También puedes exportarla o importarla desde el menú ☰.',
+      },
+    ];
+
+    function resolveTarget(step) {
+      if (!step || !step.target) return null;
+      return typeof step.target === 'function' ? step.target() : q(step.target);
+    }
+    function tourNextLabel() {
+      return tourIndex >= tourSteps.length - 1 ? 'Terminar' : 'Siguiente';
+    }
+    function updateSpotlight(step) {
+      const el = resolveTarget(step);
+      const r = el ? el.getBoundingClientRect() : null;
+      const pad = 5;
+      if (r) {
+        tourSpot.style.top = r.top - pad + 'px';
+        tourSpot.style.left = r.left - pad + 'px';
+        tourSpot.style.width = r.width + pad * 2 + 'px';
+        tourSpot.style.height = r.height + pad * 2 + 'px';
+      } else {
+        tourSpot.style.top = '-20px';
+        tourSpot.style.left = '-20px';
+        tourSpot.style.width = '1px';
+        tourSpot.style.height = '1px';
+      }
+    }
+    function positionTourStep(step) {
+      const el = resolveTarget(step);
+      const r = el ? el.getBoundingClientRect() : null;
+      const pad = 5;
+      updateSpotlight(step);
+      tourPop.querySelector('.tour-title').textContent = step.title;
+      tourPop.querySelector('.tour-text').textContent = step.text;
+      tourPop.querySelector('.tour-hint').textContent = step.hint || '';
+      tourPop.querySelector('.tour-count').textContent = tourIndex + 1 + ' / ' + tourSteps.length;
+      tourPrev.style.visibility = tourIndex === 0 ? 'hidden' : 'visible';
+      tourNext.classList.remove('tour-done');
+      tourNext.classList.remove('tour-loading');
+      tourNext.disabled = false;
+      tourNext.textContent = tourNextLabel();
+      tourPop.style.visibility = 'hidden';
+      const pw = tourPop.offsetWidth;
+      const ph = tourPop.offsetHeight;
+      let top;
+      let left;
+      if (r) {
+        const place = step.placement || 'bottom';
+        if (place === 'top') {
+          top = r.top - ph - 10;
+          if (top < 8) top = Math.min(Math.max(8, window.innerHeight - ph - 8), r.bottom + 10);
+          left = Math.min(Math.max(8, r.left), Math.max(8, window.innerWidth - pw - 8));
+        } else if (place === 'right') {
+          if (r.right + 12 + pw <= window.innerWidth - 8) {
+            left = r.right + 12;
+            top = Math.min(Math.max(8, r.top), Math.max(8, window.innerHeight - ph - 8));
+          } else {
+            // No cabe a la derecha (p. ej. una fila ancha): debajo, alineado a la derecha.
+            left = Math.max(8, Math.min(r.right - pw, window.innerWidth - pw - 8));
+            top = r.bottom + 10;
+            if (top + ph > window.innerHeight - 8) top = Math.max(8, r.top - ph - 10);
+          }
+        } else if (place === 'left') {
+          left = r.left - pw - 12;
+          if (left < 8) left = Math.min(window.innerWidth - pw - 8, r.right + 12);
+          top = Math.min(Math.max(8, r.top), Math.max(8, window.innerHeight - ph - 8));
+        } else {
+          top = r.bottom + 10;
+          if (top + ph > window.innerHeight - 8) top = Math.max(8, r.top - ph - 10);
+          left = Math.min(Math.max(8, r.left - pad), Math.max(8, window.innerWidth - pw - 8));
+        }
+      } else {
+        top = Math.max(8, (window.innerHeight - ph) / 2);
+        left = Math.max(8, (window.innerWidth - pw) / 2);
+      }
+      tourPop.style.top = top + 'px';
+      tourPop.style.left = left + 'px';
+      tourPop.style.visibility = 'visible';
+    }
+    // Guarda/restaura el estado del tour para que "Anterior" deshaga los
+    // cambios del paso que se deja.
+    function captureTourState() {
+      return {
+        todo: localStorage.getItem(KEY_TODO),
+        tags: localStorage.getItem(KEY_TAGS),
+        tabs: localStorage.getItem(KEY_TABS),
+        active: localStorage.getItem(KEY_TAB_ACTIVE),
+      };
+    }
+    async function restoreTourState(snap) {
+      if (!snap) return;
+      // Cerrar el detalle abierto para que el observer no re-agregue el ticket.
+      const h3 = qa('h3').find((h) => /Detalle de solicitud/.test(h.textContent));
+      if (h3) {
+        const back = q('.anticon-arrow-left');
+        if (back) back.click();
+        await sleep(700);
+      }
+      const set = (k, v) => {
+        if (v != null) localStorage.setItem(k, v);
+        else localStorage.removeItem(k);
+      };
+      set(KEY_TODO, snap.todo);
+      set(KEY_TAGS, snap.tags);
+      set(KEY_TABS, snap.tabs);
+      set(KEY_TAB_ACTIVE, snap.active);
+      activeTabId = localStorage.getItem(KEY_TAB_ACTIVE) || loadTabs()[0].id;
+      selectedCodes.clear();
+      selAnchor = null;
+      closeTagMenu();
+      const si = q('#hp-todo-search');
+      if (si) si.value = '';
+      render();
+    }
+    async function showTourStep(i, capture) {
+      const step = tourSteps[i];
+      if (!step) return endTour();
+      stopTourPoll();
+      if (capture) tourSnaps[i] = captureTourState();
+      tourIndex = i;
+      if (typeof step.show === 'function') {
+        try {
+          await step.show();
+        } catch (e) {}
+        if (tourIndex !== i) return;
+      }
+      positionTourStep(step);
+      startTourPoll(i);
+    }
+    async function advanceTour(dir) {
+      stopTourPoll();
+      const ni = tourIndex + dir;
+      if (ni < 0) return;
+      if (ni >= tourSteps.length) return endTour();
+      if (dir < 0) {
+        // Retroceder: restaura el estado de antes del paso al que vuelves,
+        // deshaciendo ese paso y los posteriores y dejándolos listos para rehacer.
+        const cur = tourIndex;
+        await restoreTourState(tourSnaps[ni]);
+        if (tourIndex !== cur) return;
+        showTourStep(ni, false);
+        return;
+      }
+      showTourStep(ni, true);
+    }
+    function endTour() {
+      if (tourEl.classList.contains('hidden')) return;
+      exitTourMode().then(() => {
+        tourEl.classList.add('hidden');
+      });
+    }
+    function resetTourUi() {
+      tourPop.querySelector('.tour-title').textContent = '';
+      tourPop.querySelector('.tour-text').textContent = '';
+      tourPop.querySelector('.tour-hint').textContent = '';
+      tourPop.querySelector('.tour-count').textContent = '';
+      tourPop.style.visibility = 'hidden';
+      tourNext.classList.remove('tour-done');
+      tourNext.classList.remove('tour-loading');
+      tourNext.disabled = false;
+      tourNext.textContent = 'Siguiente';
+      tourSpot.style.top = '-20px';
+      tourSpot.style.left = '-20px';
+      tourSpot.style.width = '1px';
+      tourSpot.style.height = '1px';
+    }
+    async function openTour() {
+      q('#hp-todo-panel').classList.remove('hidden');
+      tourSteps = TOUR_STEPS.slice();
+      tourIndex = 0;
+      tourSnaps = [];
+      resetTourUi();
+      tourEl.classList.remove('hidden');
+      await enterTourMode();
+      // Mostrar el primer paso ya (sin contenido viejo) y preparar la app en segundo plano.
+      showTourStep(0, true);
+      try {
+        await ensureListReady();
+        await clearFilters();
+        await waitFor(() => qa('tr.ant-table-row').length > 0, 8000, 200);
+      } catch (e) {}
+    }
+    async function handleTourNext() {
+      if (tourBusy) return;
+      if (tourIndex >= tourSteps.length - 1) return endTour();
+      const step = tourSteps[tourIndex];
+      let done = true;
+      if (step && typeof step.done === 'function') {
+        try {
+          done = !!step.done();
+        } catch (e) {
+          done = false;
+        }
+      }
+      // Si el usuario avanza sin completar el paso, lo completo por él.
+      if (!done && step && typeof step.auto === 'function') {
+        tourBusy = true;
+        stopTourPoll();
+        setTourNextBusy(true, false);
+        try {
+          await step.auto();
+        } catch (e) {}
+        tourBusy = false;
+      }
+      advanceTour(1);
+    }
+    tourNext.addEventListener('click', handleTourNext);
+    tourPrev.addEventListener('click', () => advanceTour(-1));
+    q('#hp-tour-skip').addEventListener('click', () => endTour());
+    window.addEventListener('resize', () => {
+      if (!tourEl.classList.contains('hidden')) positionTourStep(tourSteps[tourIndex]);
+    });
+    q('#hp-tutorial-btn').addEventListener('click', () => {
+      todoMenu.classList.add('hidden');
+      openTour();
+    });
 
     const listEl = q('#hp-todo-list');
     listEl.addEventListener('click', (e) => {
@@ -806,7 +1392,7 @@
           (i > 0 ? '<button class="hp-tab-del" title="Eliminar pestaña">&times;</button>' : '');
         const nameEl = el.querySelector('.hp-tab-name');
         nameEl.textContent = tab.name;
-        nameEl.title = 'Doble clic para renombrar';
+        nameEl.title = 'Doble click para renombrar';
         el.addEventListener('click', (e) => {
           if (e.target.closest('.hp-tab-del') || e.target.closest('.hp-tab-name-input')) return;
           if (tab.id !== activeTabId) selectTab(tab.id);
@@ -1461,7 +2047,10 @@
   }
 
   // ---------- inicio ----------
-  if (CONFIG.todoWidget) await restoreBackup();
+  if (CONFIG.todoWidget) {
+    await restoreTourBackup();
+    await restoreBackup();
+  }
   if (CONFIG.persistModule) setupPersistModule();
   if (CONFIG.persistView) setupPersistView();
   if (CONFIG.todoWidget) setupTodoWidget();
