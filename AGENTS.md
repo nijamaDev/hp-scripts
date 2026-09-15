@@ -91,6 +91,7 @@ Opening a ticket shows a detail view with:
 - `hp_todo_tab_active` — the id of the currently selected tab.
 - `hp_todo_width` — the todo panel's saved width (px).
 - `hp_todo_height` — the todo panel's saved height (px).
+- `hp_todo_open` — whether the panel is open (`false` = minimized; absent = open, the default).
 
 ### Backup / restore (IndexedDB)
 
@@ -125,7 +126,8 @@ keys mid-session.
 
 Floating panel anchored bottom-left (over the sidebar logo). Header has the title, the ticket
 count, a minimize button (`#hp-todo-min`, collapses the panel), and a hamburger button
-(`#hp-todo-gear`) that opens the options menu. The header-right order is min, gear, count.
+(`#hp-todo-gear`) that opens the options menu. The header-right order is min, gear, count. The
+panel is open the first time; once minimized it stays minimized across reloads (`hp_todo_open`).
 
 - Auto-adds a ticket when its detail view opens (via `MutationObserver` on `h3`).
 - The item for the currently open ticket gets a subtle green background
@@ -206,15 +208,19 @@ count, a minimize button (`#hp-todo-min`, collapses the panel), and a hamburger 
    the user. Searches are now driven from the todo widget's search box; the app field is only set
    to "Por código" transiently by `openTicket()` when it needs to search by code.
 
-6. **Waits are short (1s) with retries (up to 10).** The React app renders asynchronously, so
-   elements often appear a moment after an action. `waitForRetry(fn)` polls in 1-second chunks
-   and retries up to 10 times rather than blocking on one long timeout. The ticket-search loop
-   re-triggers the search on each attempt in case the first trigger was missed — but when the
-   filters are confirmed clear and the table comes back empty (`tr.ant-table-row` count 0, the
-   "Sin datos" state), it stops instead of retrying: the ticket simply doesn't exist. Before each
-   attempt it re-checks the preconditions (`isSearchFieldSet('Por código')` and filters clear),
-   because the app can silently reset the search-field selector; the early-stop only applies when
-   both were confirmed for that attempt.
+6. **Waits are short (500ms) with many retries (up to 30 = ~15s).** The React app renders
+   asynchronously and the HelpPeople backend can be slow, so elements often appear well after an
+   action. `waitForRetry(fn)` polls in 500ms chunks and retries up to 30 times (~15s) rather than
+   blocking on one long timeout. `ensureListReady()` waits for the state to actually change (the
+   detail to close; Solicitudes/grilla to become active) instead of fixed `sleep`s, so it survives
+   slow remounts. The ticket-search loop re-triggers the search on each attempt in case the first
+   trigger was missed — but when the filters are confirmed clear and the table shows a **stable**
+   "Sin datos" (`.ant-empty`, ~8s with no `.ant-spin-spinning`), it stops instead of retrying: the
+   ticket simply doesn't exist. The stable threshold matters because the previous query's empty
+   table lingers while the new (slow) request is in flight — a brief empty state is not "not found".
+   Before each attempt it re-checks the preconditions (`isSearchFieldSet('Por código')` and filters
+   clear), because the app can silently reset the search-field selector; the early-stop only applies
+   when both were confirmed for that attempt.
 
 7. **`stopPropagation()` on the tag menu.** When you click a color swatch or toggle a tag, the
    menu re-renders its own content, which **detaches the clicked element**. A

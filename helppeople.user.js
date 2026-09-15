@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelpPeople Mejoras
 // @namespace    helppeople
-// @version      1.5
+// @version      1.6
 // @description  Extensión de funcionalidades para HelpPeople
 // @updateURL    https://raw.githubusercontent.com/nijamaDev/hp-scripts/main/helppeople.user.js
 // @downloadURL  https://raw.githubusercontent.com/nijamaDev/hp-scripts/main/helppeople.user.js
@@ -38,6 +38,7 @@
   const KEY_TAGS = 'hp_tags';
   const KEY_TABS = 'hp_todo_tabs';
   const KEY_TAB_ACTIVE = 'hp_todo_tab_active';
+  const KEY_TODO_OPEN = 'hp_todo_open';
   const TAG_COLORS = ['#1677ff', '#52c41a', '#faad14', '#f5222d', '#722ed1', '#13c2c2', '#fa8c16', '#eb2f96'];
   const MODULES = ['Dashboard', 'Solicitudes'];
   const SEARCH_FIELD_CODE = 'Por código';
@@ -78,7 +79,7 @@
   // La app borra su localStorage al cerrar sesión, y con él se perderían los
   // tickets. Guardamos una copia en IndexedDB (que no le afecta) y la
   // restauramos al iniciar si las claves no están.
-  const BACKUP_KEYS = [KEY_STATE, KEY_TODO, KEY_TAGS, KEY_TABS, KEY_TAB_ACTIVE, 'hp_todo_width', 'hp_todo_height'];
+  const BACKUP_KEYS = [KEY_STATE, KEY_TODO, KEY_TAGS, KEY_TABS, KEY_TAB_ACTIVE, KEY_TODO_OPEN, 'hp_todo_width', 'hp_todo_height'];
   const BACKUP_DB = 'hp_mejoras';
   const BACKUP_STORE = 'kv';
 
@@ -240,7 +241,7 @@
     }
     return null;
   }
-  async function waitForRetry(fn, attempts = 10, timeout = 1000, step = 100) {
+  async function waitForRetry(fn, attempts = 30, timeout = 500, step = 100) {
     for (let i = 0; i < attempts; i++) {
       const v = await waitFor(fn, timeout, step);
       if (v) return v;
@@ -276,6 +277,17 @@
     const rows = qa('tr.ant-table-row');
     return rows.length === 1 && rows[0].getAttribute('data-row-key') === code;
   }
+  function rowExists(code) {
+    return !!q('tr.ant-table-row[data-row-key="' + code + '"]');
+  }
+  function tableEmptyConfirmed() {
+    // "Sin datos" real (no un hueco transitorio mientras carga).
+    if (q('.ant-spin-spinning')) return false;
+    if (qa('tr.ant-table-row').length > 0) return false;
+    const empty = q('.ant-table-placeholder') || q('.ant-empty');
+    if (!empty) return false;
+    return empty.classList.contains('ant-table-placeholder') || /sin datos|no hay|no se encontr/i.test(empty.textContent || '');
+  }
   function extractPriority() {
     const estadoTag = q('span.ant-tag[title="Estado de la Solicitud"]');
     if (!estadoTag) return null;
@@ -296,18 +308,18 @@
       return !!(fb && fb.parentElement.querySelector('.ant-badge-count'));
     };
 
-    // Espera a que aparezca la barra de herramientas; con cargas lentas (por ejemplo,
-    // al salir del detalle de un ticket, donde se desmonta) los filtros pueden aplicarse después.
+    // Espera a que aparezca la barra de herramientas (HP puede tardar; hasta ~15s).
     if (!findFilterBtn()) {
       if (!(await waitForRetry(findFilterBtn))) return false;
-      if (!hasBadge()) await waitFor(hasBadge, 1500, 100);
     }
+    // Da un momento a que aparezca el contador de filtros activos.
+    if (!hasBadge()) await waitFor(hasBadge, 1500, 100);
     if (!hasBadge()) return true;
 
-    // El panel puede no abrirse, o la app puede volver a aplicar los filtros mientras
-    // termina de renderizar; reintenta abrir y limpiar hasta que el contador desaparezca.
+    // El panel puede tardar en abrirse, o la app puede re-aplicar los filtros al
+    // terminar de renderizar; reintenta abrir y limpiar hasta que el contador se vaya.
     let opened = !!findClearBtn();
-    for (let attempt = 0; attempt < 6 && hasBadge(); attempt++) {
+    for (let attempt = 0; attempt < 8 && hasBadge(); attempt++) {
       let clearBtn = findClearBtn();
       if (!clearBtn) {
         const fb = findFilterBtn();
@@ -315,13 +327,13 @@
           fb.click();
           opened = true;
         }
-        clearBtn = await waitFor(findClearBtn, 1500, 100);
+        clearBtn = await waitForRetry(findClearBtn, 10, 500, 100);
       }
       if (clearBtn) {
         clearBtn.click();
         await sleep(700);
       } else {
-        await sleep(200);
+        await sleep(300);
       }
     }
     if (opened && findClearBtn()) {
@@ -330,28 +342,40 @@
     }
     return !hasBadge();
   }
+  function detailOpen() {
+    return qa('h3').some((h) => /Detalle de solicitud/.test(h.textContent));
+  }
   async function ensureListReady() {
     if (!window.location.hash.includes('helpdesk')) {
       window.location.hash = '#/helppeople/helpdesk';
       await waitForRetry(() => findModuleButtons()['Solicitudes']);
       await sleep(400);
     }
-    const detail = qa('h3').find((h) => /Detalle de solicitud/.test(h.textContent));
-    if (detail) {
+    // Salir del detalle y esperar a que realmente se cierre.
+    if (detailOpen()) {
       const back = q('.anticon-arrow-left');
       if (back) back.click();
-      await sleep(400);
+      await waitFor(() => !detailOpen(), 8000, 150);
+      if (detailOpen()) {
+        // El click se pudo perder en un re-render; reintenta.
+        const back2 = q('.anticon-arrow-left');
+        if (back2) back2.click();
+        await waitFor(() => !detailOpen(), 8000, 150);
+      }
     }
     if (activeModule() !== 'Solicitudes') {
-      const sol = qa('button.ant-btn').find((b) => b.textContent.includes('Solicitudes'));
-      if (sol) sol.click();
-      await sleep(600);
+      const sol = await waitForRetry(() => qa('button.ant-btn').find((b) => b.textContent.includes('Solicitudes')));
+      if (sol) {
+        sol.click();
+        await waitFor(() => activeModule() === 'Solicitudes', 8000, 150);
+      }
     }
-    const view = activeView();
-    if (view && view !== 'grilla') {
-      const grilla = viewButtons()['grilla'];
-      if (grilla) grilla.click();
-      await sleep(400);
+    if (activeView() !== 'grilla') {
+      const grilla = await waitForRetry(() => viewButtons()['grilla']);
+      if (grilla) {
+        grilla.click();
+        await waitFor(() => activeView() === 'grilla', 8000, 150);
+      }
     }
   }
   async function searchPlatformBySubject(text) {
@@ -370,22 +394,44 @@
     try {
       await ensureListReady();
       let filtersClear = await clearFilters();
-      for (let attempt = 0; attempt < 10; attempt++) {
-        // Antes de buscar, confirma las condiciones: filtros limpios y "Por código".
+      let visible = false;
+      for (let attempt = 0; attempt < 4 && !visible; attempt++) {
+        // Confirma las condiciones antes de buscar: filtros limpios y "Por código".
         if (!filtersClear) filtersClear = await clearFilters();
         if (!isSearchFieldSet(SEARCH_FIELD_CODE)) await setSearchField(SEARCH_FIELD_CODE);
-        const ready = filtersClear && isSearchFieldSet(SEARCH_FIELD_CODE);
+        if (!filtersClear) {
+          // No se pudieron limpiar los filtros (barra lenta); revalúa en la próxima vuelta.
+          await sleep(300);
+          continue;
+        }
         await searchFor(code);
-        if (await waitFor(() => isTicketVisible(code), 1500, 100)) break;
-        // Con las condiciones confirmadas y la búsqueda aplicada sin resultados, no existe.
-        if (ready && qa('tr.ant-table-row').length === 0) break;
-        // En caso contrario, puede que falte algo; se revalúa en la próxima vuelta.
+        // Espera hasta ~15s a que aparezca la fila o a que se confirme "sin datos".
+        let emptyStreak = 0;
+        for (let i = 0; i < 30; i++) {
+          if (rowExists(code)) {
+            visible = true;
+            break;
+          }
+          if (tableEmptyConfirmed()) {
+            emptyStreak += 1;
+            if (emptyStreak >= 16) break; // ~8s estable: la búsqueda no encontró nada
+          } else {
+            emptyStreak = 0;
+          }
+          await sleep(500);
+        }
+        if (visible || emptyStreak >= 16) break;
+        // No se confirmó nada (pudo re-renderizarse la barra): revalúa y reintenta.
         filtersClear = await clearFilters();
       }
-      await sleep(300);
+      if (!visible) return false;
       const link = q('tr.ant-table-row[data-row-key="' + code + '"] a');
       const target = link || q('tr.ant-table-row[data-row-key="' + code + '"]');
-      if (target) target.click();
+      if (target) {
+        target.click();
+        return true;
+      }
+      return false;
     } finally {
       suppressView = false;
     }
@@ -605,11 +651,19 @@
       '</div>';
     document.body.appendChild(root);
 
+    // Estado abierto/minimizado: por defecto abierto la primera vez; si el usuario
+    // lo minimiza, se mantiene minimizado al recargar.
+    function setTodoPanelOpen(open) {
+      q('#hp-todo-panel').classList.toggle('hidden', !open);
+      save(KEY_TODO_OPEN, !!open);
+    }
+    if (loadRaw(KEY_TODO_OPEN) === false) q('#hp-todo-panel').classList.add('hidden');
     q('#hp-todo-fab').addEventListener('click', () => {
-      q('#hp-todo-panel').classList.toggle('hidden');
+      const willOpen = q('#hp-todo-panel').classList.contains('hidden');
+      setTodoPanelOpen(willOpen);
     });
     q('#hp-todo-min').addEventListener('click', () => {
-      q('#hp-todo-panel').classList.add('hidden');
+      setTodoPanelOpen(false);
     });
 
     // ---- menú de opciones (exportar / importar) ----
