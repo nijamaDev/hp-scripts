@@ -135,6 +135,9 @@ panel is open the first time; once minimized it stays minimized across reloads (
   heading (cleared when the detail view closes).
 - Removing the open ticket from the list exits the ticket (clicks the app's back arrow).
 - Per-item: priority dot+label, tag chips, a tag menu (circle/dot icon), and a remove button.
+  The tag menu's ✎ opens an inline editor for a tag: a name field, the color swatches and a
+  **Guardar** button. Name/color are a draft until you press Guardar (or Enter); Escape cancels, and
+  a name that matches another tag is rejected.
 - Search box filters by code/subject/**tag** across **all tabs** (the tab bar is hidden while a
   query is present). On Enter: a **numeric** query opens the matching ticket (exact or partial
   match in the list, else searched by code on the platform); a query with **letters** runs a
@@ -222,12 +225,13 @@ panel is open the first time; once minimized it stays minimized across reloads (
    clear), because the app can silently reset the search-field selector; the early-stop only applies
    when both were confirmed for that attempt.
 
-7. **`stopPropagation()` on the tag menu.** When you click a color swatch or toggle a tag, the
-   menu re-renders its own content, which **detaches the clicked element**. A
-   `tagMenu.contains(e.target)` check then returns `false` for a detached node, so the menu
-   would close on every interaction. `stopPropagation` on the menu prevents the document-level
-   "click outside" handler from ever seeing menu clicks (the event path is fixed at dispatch
-   time, so even detached elements still propagate through the menu).
+7. **`stopPropagation()` on the tag menu.** When you toggle a tag (or the menu re-renders its own
+   content), the clicked element gets **detached**. A `tagMenu.contains(e.target)` check then returns
+   `false` for a detached node, so the menu would close on every interaction. `stopPropagation` on
+   the menu prevents the document-level "click outside" handler from ever seeing menu clicks (the
+   event path is fixed at dispatch time, so even detached elements still propagate through the menu).
+   The editor inputs/buttons also stop propagation and prevent `mousedown` so a click doesn't blur
+   the name field before it applies.
 
 8. **Drag-and-drop uses HTML5 DnD with live reordering on `dragover`.** Items are
    `draggable`, and on `dragover` the dragged row is moved with `insertAdjacentElement` so the

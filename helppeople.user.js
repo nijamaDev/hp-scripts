@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelpPeople Mejoras
 // @namespace    helppeople
-// @version      1.6
+// @version      1.7
 // @description  Extensión de funcionalidades para HelpPeople
 // @updateURL    https://raw.githubusercontent.com/nijamaDev/hp-scripts/main/helppeople.user.js
 // @downloadURL  https://raw.githubusercontent.com/nijamaDev/hp-scripts/main/helppeople.user.js
@@ -576,6 +576,12 @@
       '#hp-tag-menu .m-edit{color:#999;cursor:pointer;font-size:12px;padding:0 4px;line-height:1;}',
       '#hp-tag-menu .m-edit:hover{color:#1677ff;}',
       '.m-edit-colors{display:flex;flex-wrap:wrap;gap:4px;padding:2px 6px 6px 6px;}',
+      '.m-edit-panel{display:flex;flex-direction:column;gap:6px;padding:2px 6px 6px 6px;border-top:1px solid #f0f0f0;margin-top:2px;}',
+      '.m-edit-panel .m-edit-colors{padding:0;}',
+      '.m-edit-name{width:100%;box-sizing:border-box;padding:4px 7px;border:1px solid #d9d9d9;border-radius:4px;font-size:12px;outline:none;}',
+      '.m-edit-name:focus{border-color:#1677ff;}',
+      '.m-edit-actions{display:flex;justify-content:flex-end;}',
+      '.m-edit-actions button{border:1px solid #1677ff;background:#1677ff;color:#fff;border-radius:4px;padding:3px 12px;font-size:12px;cursor:pointer;}',
       '#hp-tag-menu .m-new{color:#1677ff;padding:4px 6px;cursor:pointer;font-size:12px;border-top:1px solid #f0f0f0;margin-top:2px;border-radius:4px;}',
       '#hp-tag-menu .m-new:hover{background:#f5f5f5;}',
       '#hp-tag-form{padding:6px;display:flex;flex-direction:column;gap:6px;border-top:1px solid #f0f0f0;margin-top:2px;}',
@@ -1911,13 +1917,13 @@
         div.innerHTML =
           '<span class="m-chip" style="background:' + tg.color + '1f;color:' + tg.color + ';">' + escapeHtml(tg.name) + '</span>' +
           (checked ? '<span class="m-check">✓</span>' : '') +
-          '<span class="m-edit" title="Cambiar color">✎</span>' +
+          '<span class="m-edit" title="Editar etiqueta (nombre y color)">✎</span>' +
           '<span class="m-del" title="Eliminar etiqueta">&times;</span>';
         div.addEventListener('click', () => toggleTag(tg.name));
         const edit = div.querySelector('.m-edit');
         edit.addEventListener('click', (e) => {
           e.stopPropagation();
-          toggleColorEditor(tg.name, div);
+          toggleTagEditor(tg.name, div);
         });
         const del = div.querySelector('.m-del');
         del.addEventListener('click', (e) => {
@@ -1956,38 +1962,122 @@
       renderTagMenu();
     }
 
-    function setTagColor(name, color) {
+    function applyTagEdit(oldName, newName, color) {
+      newName = (newName || '').trim() || oldName;
       const tags = loadTags();
-      const tg = tags.find((t) => t.name === name);
-      if (tg) {
-        tg.color = color;
-        saveTags(tags);
+      const tg = tags.find((t) => t.name === oldName);
+      if (!tg) return false;
+      // Un nombre que ya existe se rechaza (se conserva el actual).
+      if (newName !== oldName && tags.some((t) => t.name === newName)) newName = oldName;
+      let changed = false;
+      if (newName !== oldName) {
+        tg.name = newName;
+        changed = true;
+        const list = loadArr(KEY_TODO);
+        let listChanged = false;
+        list.forEach((t) => {
+          if (Array.isArray(t.tags)) {
+            const i = t.tags.indexOf(oldName);
+            if (i >= 0) {
+              t.tags[i] = newName;
+              listChanged = true;
+            }
+          }
+        });
+        if (listChanged) save(KEY_TODO, list);
       }
+      if (color && color !== tg.color) {
+        tg.color = color;
+        changed = true;
+      }
+      if (changed) saveTags(tags);
       render();
       renderTagMenu();
+      return changed;
     }
 
-    function toggleColorEditor(name, tagDiv) {
+    function toggleTagEditor(name, tagDiv) {
       const existing = tagDiv.nextElementSibling;
-      if (existing && existing.classList.contains('m-edit-colors')) {
+      if (existing && existing.classList.contains('m-edit-panel')) {
         existing.remove();
         return;
       }
-      tagMenuList.querySelectorAll('.m-edit-colors').forEach((el) => el.remove());
+      tagMenuList.querySelectorAll('.m-edit-panel').forEach((el) => el.remove());
       const tg = loadTags().find((t) => t.name === name);
+      const startColor = tg ? tg.color : TAG_COLORS[0];
+      let draftColor = startColor;
+      let committed = false;
+
+      const panel = document.createElement('div');
+      panel.className = 'm-edit-panel';
+
+      const input = document.createElement('input');
+      input.className = 'm-edit-name';
+      input.type = 'text';
+      input.maxLength = 40;
+      input.value = tg ? tg.name : name;
+      input.addEventListener('click', (e) => e.stopPropagation());
+      input.addEventListener('dblclick', (e) => e.stopPropagation());
+      const commit = () => {
+        if (committed) return;
+        committed = true;
+        applyTagEdit(name, input.value, draftColor);
+      };
+      input.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          commit();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          input.value = name;
+          draftColor = startColor;
+          renderDraftColors();
+          committed = true;
+          panel.remove();
+        }
+      });
+      input.addEventListener('blur', commit);
+      panel.appendChild(input);
+
       const colors = document.createElement('div');
       colors.className = 'm-edit-colors';
-      for (const c of TAG_COLORS) {
-        const sw = document.createElement('div');
-        sw.className = 'hp-color-swatch' + (tg && c === tg.color ? ' selected' : '');
-        sw.style.background = c;
-        sw.addEventListener('click', (e) => {
-          e.stopPropagation();
-          setTagColor(name, c);
-        });
-        colors.appendChild(sw);
+      function renderDraftColors() {
+        colors.innerHTML = '';
+        for (const c of TAG_COLORS) {
+          const sw = document.createElement('div');
+          sw.className = 'hp-color-swatch' + (c === draftColor ? ' selected' : '');
+          sw.style.background = c;
+          // Evita que el input pierda el foco (y se cierre) al pulsar un color.
+          sw.addEventListener('mousedown', (e) => e.preventDefault());
+          sw.addEventListener('click', (e) => {
+            e.stopPropagation();
+            draftColor = c;
+            renderDraftColors();
+          });
+          colors.appendChild(sw);
+        }
       }
-      tagDiv.after(colors);
+      renderDraftColors();
+      panel.appendChild(colors);
+
+      const actions = document.createElement('div');
+      actions.className = 'm-edit-actions';
+      const saveBtn = document.createElement('button');
+      saveBtn.type = 'button';
+      saveBtn.textContent = 'Guardar';
+      // Evita que el click cierre/altere antes de aplicar (no dispara el blur del input).
+      saveBtn.addEventListener('mousedown', (e) => e.preventDefault());
+      saveBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        commit();
+      });
+      actions.appendChild(saveBtn);
+      panel.appendChild(actions);
+
+      tagDiv.after(panel);
+      input.focus();
+      input.select();
     }
 
     function openTagMenu(code, btn) {
