@@ -143,7 +143,8 @@ panel is open the first time; once minimized it stays minimized across reloads (
   match in the list, else searched by code on the platform); a query with **letters** runs a
   *subject* search on the platform and does **not** open a ticket.
 - HTML5 drag-and-drop reordering (live "make space" on `dragover`) with a semi-transparent drag
-  image so the landing gap stays visible.
+  image (a `<canvas>`) so the landing gap stays visible. The dragged row keeps a grey "hover"
+  shading that follows it as it moves (see the `:hover` gotcha).
 - Ctrl/Cmd+click toggles an item's selection (blue `.selected` background); Shift+click selects
   the range from the last-clicked anchor. Dragging a selected item drags the whole selection, so
   several tickets can be dropped onto a tab at once (reordering is single-item only). Clicking
@@ -157,8 +158,9 @@ panel is open the first time; once minimized it stays minimized across reloads (
   - Opening a ticket (however it was opened) switches to the tab that contains it, or to the
     first tab when it's a new ticket. This only fires when the open ticket *changes*, so you can
     switch tabs freely afterwards without it snapping back.
-- Resize handles: right edge (width, saved in `hp_todo_width`) and top edge (height, saved in
-  `hp_todo_height`).
+- Resize handles: right edge (width, saved in `hp_todo_width`), top edge (height, saved in
+  `hp_todo_height`) and the top-right corner (both at once, diagonal). The width maxes out near
+  the viewport (`window.innerWidth - 80`), so it is no longer capped at the old fixed 800px.
 - **Options menu** (`#hp-todo-gear` → `#hp-todo-menu`): "Exportar datos" / "Importar datos" /
   "Tutorial": a hands-on guided tour with a clean list. It saves the real `hp_*` state to IndexedDB
   (`tour_backup`), swaps in an **empty list** (and no tags), and walks the user through 8 steps:
@@ -236,7 +238,9 @@ panel is open the first time; once minimized it stays minimized across reloads (
 8. **Drag-and-drop uses HTML5 DnD with live reordering on `dragover`.** Items are
    `draggable`, and on `dragover` the dragged row is moved with `insertAdjacentElement` so the
    other items visibly shift to make space. This was a deliberate choice: the user preferred
-   this behavior over a pointer-based drag implementation.
+   this behavior over a pointer-based drag implementation. The drag image is a `<canvas>`
+   (see the drag-image gotcha), and the dragged row gets the grey `:hover` background
+   explicitly (`.dragging`) so the shading follows *it*, not the vacated slot.
 
 9. **The FAB looks like the app logo.** The floating button is positioned exactly over the
    sidebar logo (left ~16px, same 40×40 size) and shows the app's own logo image, grabbed
@@ -320,7 +324,15 @@ panel is open the first time; once minimized it stays minimized across reloads (
   upward from the hamburger button.
 - **Custom drag images need a canvas.** Chrome renders a cloned-element `setDragImage` image
   fully opaque (and may not rasterize an off-screen clone at all), so the userscript draws a
-  translucent `<canvas>` (`ctx.globalAlpha`) for the dragged item instead.
+  translucent `<canvas>` (`ctx.globalAlpha`) for the dragged item. It is appended to `body` at
+  the item's position and removed with `setTimeout(…, 0)` right after `setDragImage` (the
+  hotspot is `dragstart`'s `clientX/Y` minus the item rect).
+- **`:hover` is frozen at the drag-start slot during an HTML5 drag.** Chrome does not
+  recalculate `:hover` while dragging, so the row that ends up occupying the original slot
+  inherits the grey hover background and the shading looks like it "stays behind". The userscript
+  therefore adds `hp-dragging` to `#hp-todo-list` on `dragstart` (removed on `dragend`) and
+  scopes the hover rules with `#hp-todo-list:not(.hp-dragging)`, while `.hp-todo-item.dragging`
+  gets the grey background explicitly so the shading follows the dragged row instead.
 - **Never verify the file picker via the Playwright MCP alone.** The MCP intercepts file
   choosers at the CDP level, so it reports success even when a real Chrome would suppress the
   native dialog (see decision 11). To truly test import, watch for the actual OS dialog or

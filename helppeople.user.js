@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelpPeople Mejoras
 // @namespace    helppeople
-// @version      1.7
+// @version      1.8
 // @description  Extensión de funcionalidades para HelpPeople
 // @updateURL    https://raw.githubusercontent.com/nijamaDev/hp-scripts/main/helppeople.user.js
 // @downloadURL  https://raw.githubusercontent.com/nijamaDev/hp-scripts/main/helppeople.user.js
@@ -548,12 +548,12 @@
       '#hp-tab-add:hover{color:#1677ff;border-color:#91caff;}',
       '#hp-todo-list{list-style:none;margin:0;padding:6px;overflow-y:auto;flex:1;min-height:0;}',
       '.hp-todo-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:6px;cursor:pointer;user-select:none;}',
-      '.hp-todo-item:hover{background:#f5f5f5;}',
+      '#hp-todo-list:not(.hp-dragging) .hp-todo-item:hover{background:#f5f5f5;}',
       '.hp-todo-item.active{background:#e8f8ee;}',
-      '.hp-todo-item.active:hover{background:#d9f2e3;}',
+      '#hp-todo-list:not(.hp-dragging) .hp-todo-item.active:hover{background:#d9f2e3;}',
       '.hp-todo-item.selected{background:#e6f4ff;}',
-      '.hp-todo-item.selected:hover{background:#d4e8ff;}',
-      '.hp-todo-item.dragging{opacity:0.5;}',
+      '#hp-todo-list:not(.hp-dragging) .hp-todo-item.selected:hover{background:#d4e8ff;}',
+      '.hp-todo-item.dragging{opacity:0.5;background:#f5f5f5;}',
       '.hp-code{font-weight:700;color:#1677ff;flex-shrink:0;font-size:13px;}',
       '.hp-subject{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#444;font-size:13px;}',
       '.hp-priority{display:inline-flex;align-items:center;gap:4px;flex-shrink:0;font-size:11px;color:#666;}',
@@ -599,8 +599,10 @@
       '#hp-todo-search:focus{border-color:#1677ff;}',
       '.hp-resize-handle{position:absolute;top:0;right:0;bottom:0;width:6px;cursor:ew-resize;}',
       '.hp-resize-handle:hover{background:rgba(22,119,255,0.15);}',
-      '.hp-resize-handle-top{position:absolute;top:0;left:0;right:6px;height:6px;cursor:ns-resize;}',
+      '.hp-resize-handle-top{position:absolute;top:0;left:0;right:14px;height:6px;cursor:ns-resize;}',
       '.hp-resize-handle-top:hover{background:rgba(22,119,255,0.15);}',
+      '.hp-resize-corner{position:absolute;top:0;right:0;width:14px;height:14px;cursor:nesw-resize;z-index:2;}',
+      '.hp-resize-corner:hover{background:rgba(22,119,255,0.18);}',
     ].join('\n');
     document.head.appendChild(style);
 
@@ -625,6 +627,7 @@
       '<div id="hp-todo-footer"><input id="hp-todo-search" type="text" placeholder="Buscar código o asunto..."></div>' +
       '<div class="hp-resize-handle-top"></div>' +
       '<div class="hp-resize-handle"></div>' +
+      '<div class="hp-resize-corner"></div>' +
       '</div>' +
       '<button id="hp-todo-fab" title="Tickets">' +
       fabIcon +
@@ -1672,6 +1675,10 @@
     listEl.addEventListener('dragstart', (e) => {
       const item = e.target.closest('li.hp-todo-item');
       if (!item) return;
+      // El :hover queda "congelado" en la posición inicial durante el arrastre
+      // (Chrome no lo recalcula), así que se anula mientras se arrastra para que
+      // el sombreado no se quede pegado en el hueco ni salte a la fila que lo ocupa.
+      listEl.classList.add('hp-dragging');
       dragCode = item.dataset.code;
       dragCodes = selectedCodes.has(dragCode) && selectedCodes.size > 1 ? [...selectedCodes] : [dragCode];
       if (dragCodes.length > 1) {
@@ -1771,64 +1778,65 @@
       e.preventDefault();
     });
     listEl.addEventListener('dragend', () => {
+      listEl.classList.remove('hp-dragging');
       qa('#hp-todo-list li.dragging').forEach((li) => li.classList.remove('dragging'));
       qa('.hp-tab.drop-target').forEach((el) => el.classList.remove('drop-target'));
       dragCode = null;
       dragCodes = [];
     });
 
-    // Redimensionar en horizontal
+    // Redimensionar: borde derecho (ancho), borde superior (alto) y esquina
+    // superior derecha (ancho + alto a la vez, en diagonal).
     let panelWidth = parseInt(localStorage.getItem('hp_todo_width'), 10) || 320;
+    let panelHeight = parseInt(localStorage.getItem('hp_todo_height'), 10) || 0;
+    const maxPanelWidth = () => Math.max(240, window.innerWidth - 80);
+    const maxPanelHeight = () => Math.max(160, window.innerHeight - 80);
     function applyPanelWidth() {
       const panel = q('#hp-todo-panel');
       if (panel) panel.style.width = panelWidth + 'px';
     }
-    applyPanelWidth();
-    const handle = q('.hp-resize-handle');
-    handle.addEventListener('pointerdown', (e) => {
-      e.preventDefault();
-      const startX = e.clientX;
-      const startW = panelWidth;
-      const onMove = (ev) => {
-        panelWidth = Math.max(240, Math.min(800, startW + (ev.clientX - startX)));
-        applyPanelWidth();
-      };
-      const onUp = () => {
-        localStorage.setItem('hp_todo_width', String(panelWidth));
-        document.removeEventListener('pointermove', onMove);
-        document.removeEventListener('pointerup', onUp);
-      };
-      document.addEventListener('pointermove', onMove);
-      document.addEventListener('pointerup', onUp);
-    });
-
-    // Redimensionar en vertical (borde superior)
-    let panelHeight = parseInt(localStorage.getItem('hp_todo_height'), 10) || 0;
     function applyPanelHeight() {
       const panel = q('#hp-todo-panel');
       if (!panel || panelHeight <= 0) return;
       panel.style.maxHeight = 'none';
-      panel.style.height = Math.min(panelHeight, window.innerHeight - 80) + 'px';
+      panel.style.height = Math.min(panelHeight, maxPanelHeight()) + 'px';
     }
+    applyPanelWidth();
     applyPanelHeight();
-    const handleTop = q('.hp-resize-handle-top');
-    handleTop.addEventListener('pointerdown', (e) => {
-      e.preventDefault();
-      const panel = q('#hp-todo-panel');
-      const startY = e.clientY;
-      const startH = panel.getBoundingClientRect().height;
-      const onMove = (ev) => {
-        panelHeight = Math.max(160, Math.min(window.innerHeight - 80, startH + (startY - ev.clientY)));
-        applyPanelHeight();
+
+    // mode: 'x' = ancho (borde derecho), 'y' = alto (borde superior), 'xy' = diagonal (esquina)
+    function startPanelResize(mode) {
+      return (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const panel = q('#hp-todo-panel');
+        const startX = e.clientX;
+        const startY = e.clientY;
+        const startW = panelWidth;
+        const startH = panel.getBoundingClientRect().height;
+        const onMove = (ev) => {
+          if (mode !== 'y') {
+            panelWidth = Math.max(240, Math.min(maxPanelWidth(), startW + (ev.clientX - startX)));
+            applyPanelWidth();
+          }
+          if (mode !== 'x') {
+            panelHeight = Math.max(160, Math.min(maxPanelHeight(), startH + (startY - ev.clientY)));
+            applyPanelHeight();
+          }
+        };
+        const onUp = () => {
+          if (mode !== 'y') localStorage.setItem('hp_todo_width', String(panelWidth));
+          if (mode !== 'x') localStorage.setItem('hp_todo_height', String(panelHeight));
+          document.removeEventListener('pointermove', onMove);
+          document.removeEventListener('pointerup', onUp);
+        };
+        document.addEventListener('pointermove', onMove);
+        document.addEventListener('pointerup', onUp);
       };
-      const onUp = () => {
-        localStorage.setItem('hp_todo_height', String(panelHeight));
-        document.removeEventListener('pointermove', onMove);
-        document.removeEventListener('pointerup', onUp);
-      };
-      document.addEventListener('pointermove', onMove);
-      document.addEventListener('pointerup', onUp);
-    });
+    }
+    q('.hp-resize-handle').addEventListener('pointerdown', startPanelResize('x'));
+    q('.hp-resize-handle-top').addEventListener('pointerdown', startPanelResize('y'));
+    q('.hp-resize-corner').addEventListener('pointerdown', startPanelResize('xy'));
 
     // Buscador
     const searchEl = q('#hp-todo-search');
