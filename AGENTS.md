@@ -330,37 +330,21 @@ panel is open the first time; once minimized it stays minimized across reloads (
 
 The environment: Fedora 44 / KDE, user `ni`, Bun at `/home/ni/.bun/bin/bun` (no Node/npm).
 
-### Launch Chromium with remote debugging
+### Browser automation
 
-```bash
-nohup chromium-browser --remote-debugging-port=9222 \
-  --user-data-dir="/home/ni/.config/chromium-cdp" >/tmp/opencode/chromium.log 2>&1 &
-```
-
-- CDP endpoint: `http://localhost:9222`.
-- The `chromium-cdp` profile is a copy of the user's real profile so logins/cookies carry over.
-  Modern Chromium refuses `--remote-debugging-port` on the default profile, hence the custom dir.
-- Verify: `curl -s http://localhost:9222/json/version`.
-
-### opencode's Playwright MCP
-
-The opencode config at `~/.config/opencode/opencode.jsonc` connects Playwright to that browser:
-
-```jsonc
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "playwright": {
-      "type": "local",
-      "command": ["/home/ni/.bun/bin/bunx", "@playwright/mcp@latest", "--cdp-endpoint", "http://localhost:9222"],
-      "enabled": true
-    }
-  }
-}
-```
-
-opencode loads config only at startup — after editing this file, restart opencode.
-Browser MCP tools then appear as `playwright_browser_*`.
+- **For real work, use the Playwright MCP (`playwright_browser_*`).** It does not launch a
+  browser: it connects over CDP to a Chromium running with the dedicated, persistent profile
+  `opencode-cdp`, so logins/cookies/`localStorage` survive between runs. Start it first with
+  `~/.local/bin/opencode-ensure-browser` (idempotent). The CDP endpoint
+  (`http://127.0.0.1:9222`) and the V2 shape (`mcp.servers.playwright`) live in the local
+  opencode config `~/.config/opencode/opencode.jsonc`, not in this repo.
+- **The built-in `browser` namespace is ephemeral.** It's owned by the OpenCode desktop app and
+  gives each binding an in-memory session partition, so cookies and logins are never written to
+  disk. Use it only for quick anonymous page reads, never for anything needing a login.
+- That persistent profile is a **single shared resource**: every connecting session spawns its own
+  MCP process pointed at it, so only one session should drive the browser at a time.
+- `playwright_browser_take_screenshot` requires an explicit `scale` (e.g. `"css"`).
+- opencode reads its config only at startup; restart it after changing MCP config.
 
 ### Reinstalling/updating the userscript
 
