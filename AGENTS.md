@@ -102,7 +102,8 @@ touch, and restores any key that is missing on startup (before the widget is set
 debounced after each `save()` and also run periodically / on `pagehide`. `backupNow()` skips
 writing when `hp_todo` is absent, so a transient cleared state (right after logout) can't
 overwrite the last good snapshot; a 5s watchdog also restores + re-renders if the app clears the
-keys mid-session.
+keys mid-session. `backupNow(true)` bypasses the "don't overwrite a non-empty snapshot with an
+empty list" guard and is used by "Limpiar lista" to persist an intentional wipe.
 
 ## Key DOM selectors used by the script
 
@@ -124,10 +125,13 @@ keys mid-session.
 
 ## The todo widget
 
-Floating panel anchored bottom-left (over the sidebar logo). Header has the title, the ticket
+Floating panel anchored bottom-left (over the sidebar logo). Header has the title followed by a
+small version label (`#hp-todo-version`, from the `VERSION` constant next to the title), the ticket
 count, a minimize button (`#hp-todo-min`, collapses the panel), and a hamburger button
 (`#hp-todo-gear`) that opens the options menu. The header-right order is min, gear, count. The
 panel is open the first time; once minimized it stays minimized across reloads (`hp_todo_open`).
+`VERSION` must be kept in sync with the `@version` metadata (with `@grant none` there is no
+`GM_info` to read it from).
 
 - Auto-adds a ticket when its detail view opens (via `MutationObserver` on `h3`).
 - The item for the currently open ticket gets a subtle green background
@@ -162,7 +166,11 @@ panel is open the first time; once minimized it stays minimized across reloads (
   `hp_todo_height`) and the top-right corner (both at once, diagonal). The width maxes out near
   the viewport (`window.innerWidth - 80`), so it is no longer capped at the old fixed 800px.
 - **Options menu** (`#hp-todo-gear` → `#hp-todo-menu`): "Exportar datos" / "Importar datos" /
-  "Tutorial": a hands-on guided tour with a clean list. It saves the real `hp_*` state to IndexedDB
+  "Tutorial" / "Limpiar lista". The last one (`#hp-clear-btn`, red) asks for a native `confirm()`
+  and then wipes `hp_todo`/`hp_tags`/`hp_todo_tabs` back to the defaults (empty list, no tags,
+  single "General" tab), clears the selection/search and calls `backupNow(true)` so the emptied
+  state is written to the IndexedDB snapshot too (otherwise a later logout would restore the old
+  list). "Tutorial": a hands-on guided tour with a clean list. It saves the real `hp_*` state to IndexedDB
   (`tour_backup`), swaps in an **empty list** (and no tags), and walks the user through 8 steps:
   welcome → open a ticket → open a second → create a tab → move tickets to it → create a tag →
   remove the tickets → done. Each step spotlights a control and auto-advances once the user performs
@@ -307,7 +315,8 @@ panel is open the first time; once minimized it stays minimized across reloads (
     restoring, so the todo `MutationObserver` can't re-add the open ticket to the restored list. On
     exit — or on the next page load, via `restoreTourBackup()` in `init` — the original state is
     restored. `backupNow()` is paused during the tour **and** refuses to overwrite a non-empty
-    snapshot with an empty list, so the real backup can't be clobbered.
+    snapshot with an empty list, so the real backup can't be clobbered. The one deliberate
+    exception is `backupNow(true)` from "Limpiar lista", which persists the intentional wipe.
 
 ## Gotchas / notes for future agents
 

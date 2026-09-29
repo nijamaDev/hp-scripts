@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelpPeople Mejoras
 // @namespace    helppeople
-// @version      1.8
+// @version      1.9
 // @description  Extensión de funcionalidades para HelpPeople
 // @updateURL    https://raw.githubusercontent.com/nijamaDev/hp-scripts/main/helppeople.user.js
 // @downloadURL  https://raw.githubusercontent.com/nijamaDev/hp-scripts/main/helppeople.user.js
@@ -48,6 +48,9 @@
     { key: 'detallada', title: 'Vista detallada' },
     { key: 'ordenes', title: 'Vista órdenes de trabajo' },
   ];
+
+  // Debe coincidir con "@version" de la cabecera (se muestra junto al título).
+  const VERSION = '1.9';
 
   let suppressView = false;
   let todoRender = null;
@@ -137,27 +140,30 @@
     await idbSet('tour_backup', null);
     return true;
   }
-  async function backupNow() {
+  async function backupNow(force) {
     if (!CONFIG.todoWidget || typeof indexedDB === 'undefined' || tourActive) return;
     const todoRaw = localStorage.getItem(KEY_TODO);
     // Si los tickets no están (p. ej. justo tras cerrar sesión), conserva el último respaldo.
     if (todoRaw === null) return;
-    // No sobrescribir un respaldo con datos por una lista vacía/transitoria.
-    let empty = false;
-    try {
-      empty = JSON.parse(todoRaw).length === 0;
-    } catch (e) {
-      empty = true;
-    }
-    if (empty) {
-      const existing = await idbGet('snapshot');
-      let existingCount = 0;
+    // No sobrescribir un respaldo con datos por una lista vacía/transitoria. Con `force`
+    // (p. ej. al vaciar la lista a propósito) sí se escribe para que no se restaure lo viejo.
+    if (!force) {
+      let empty = false;
       try {
-        existingCount = existing && existing[KEY_TODO] ? JSON.parse(existing[KEY_TODO]).length : 0;
+        empty = JSON.parse(todoRaw).length === 0;
       } catch (e) {
-        existingCount = 0;
+        empty = true;
       }
-      if (existingCount > 0) return;
+      if (empty) {
+        const existing = await idbGet('snapshot');
+        let existingCount = 0;
+        try {
+          existingCount = existing && existing[KEY_TODO] ? JSON.parse(existing[KEY_TODO]).length : 0;
+        } catch (e) {
+          existingCount = 0;
+        }
+        if (existingCount > 0) return;
+      }
     }
     const snap = { savedAt: Date.now() };
     for (const k of BACKUP_KEYS) snap[k] = localStorage.getItem(k);
@@ -509,12 +515,15 @@
       '#hp-todo-header{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;font-weight:600;color:#333;border-bottom:1px solid #f0f0f0;background:#fafafa;flex-shrink:0;}',
       '#hp-todo-count{background:#e6f4ff;color:#1677ff;font-size:12px;padding:1px 8px;border-radius:10px;}',
       '#hp-todo-header-right{display:flex;align-items:center;gap:8px;}',
+      '#hp-todo-version{font-size:10px;font-weight:500;color:#bbb;margin-left:6px;}',
       '#hp-todo-gear,#hp-todo-min{border:none;background:none;color:#999;cursor:pointer;padding:0 4px;line-height:1;display:flex;align-items:center;border-radius:4px;}',
       '#hp-todo-gear:hover,#hp-todo-min:hover{color:#333;background:#e6f4ff;}',
       '#hp-todo-menu{position:fixed;z-index:2147483647;min-width:150px;background:#fff;border:1px solid #e8e8e8;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.2);padding:6px;display:flex;flex-direction:column;gap:2px;}',
       '#hp-todo-menu.hidden{display:none;}',
       '#hp-todo-menu .m-item{padding:6px 10px;border-radius:4px;cursor:pointer;font-size:13px;color:#333;}',
       '#hp-todo-menu .m-item:hover{background:#f5f5f5;}',
+      '#hp-todo-menu .m-item.m-danger{color:#f5222d;}',
+      '#hp-todo-menu .m-item.m-danger:hover{background:#fff1f0;}',
       '#hp-tour{position:fixed;inset:0;z-index:2147483647;pointer-events:none;}',
       '#hp-tour.hidden{display:none;}',
       '#hp-tour-spotlight{position:fixed;border-radius:8px;box-shadow:0 0 0 9999px rgba(0,0,0,.55);pointer-events:none;transition:top .15s,left .15s,width .15s,height .15s;}',
@@ -620,7 +629,7 @@
     root.id = 'hp-todo-root';
     root.innerHTML =
       '<div id="hp-todo-panel">' +
-      '<div id="hp-todo-header"><span>Tickets</span><span id="hp-todo-header-right"><button id="hp-todo-min" title="Minimizar"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M5 11h14v2H5z"/></svg></button><button id="hp-todo-gear" title="Opciones"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/></svg></button><span id="hp-todo-count">0</span></span></div>' +
+      '<div id="hp-todo-header"><span>Tickets<span id="hp-todo-version"></span></span><span id="hp-todo-header-right"><button id="hp-todo-min" title="Minimizar"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M5 11h14v2H5z"/></svg></button><button id="hp-todo-gear" title="Opciones"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/></svg></button><span id="hp-todo-count">0</span></span></div>' +
       '<div id="hp-todo-tabs"></div>' +
       '<ul id="hp-todo-list"></ul>' +
       '<div id="hp-todo-hint" class="hidden"></div>' +
@@ -647,6 +656,7 @@
       '<div class="m-item" id="hp-export-btn">Exportar datos</div>' +
       '<div class="m-item" id="hp-import-btn">Importar datos</div>' +
       '<div class="m-item" id="hp-tutorial-btn">Tutorial</div>' +
+      '<div class="m-item m-danger" id="hp-clear-btn">Limpiar lista</div>' +
       '</div>' +
       '<div id="hp-tour" class="hidden">' +
       '<div id="hp-tour-spotlight"></div>' +
@@ -659,6 +669,7 @@
       '</div>' +
       '</div>';
     document.body.appendChild(root);
+    q('#hp-todo-version').textContent = 'v' + VERSION;
 
     // Estado abierto/minimizado: por defecto abierto la primera vez; si el usuario
     // lo minimiza, se mantiene minimizado al recargar.
@@ -789,6 +800,30 @@
     }
     q('#hp-export-btn').addEventListener('click', exportTodoData);
     q('#hp-import-btn').addEventListener('click', importTodoFile);
+
+    // Vaciar la lista y volver al estado inicial (pestaña General, sin etiquetas).
+    function clearTodoData() {
+      const count = loadArr(KEY_TODO).length;
+      const msg = count
+        ? '¿Borrar todo? Se eliminarán ' + count + ' ticket(s), las etiquetas y las pestañas, y la lista volverá a su estado inicial. Esta acción no se puede deshacer.'
+        : '¿Restaurar la lista a su estado inicial? Se eliminarán las etiquetas y las pestañas creadas. Esta acción no se puede deshacer.';
+      if (!window.confirm(msg)) return;
+      localStorage.setItem(KEY_TODO, JSON.stringify([]));
+      localStorage.setItem(KEY_TAGS, JSON.stringify([]));
+      localStorage.setItem(KEY_TABS, JSON.stringify([{ id: 'tab-default', name: 'General' }]));
+      localStorage.setItem(KEY_TAB_ACTIVE, 'tab-default');
+      selectedCodes.clear();
+      selAnchor = null;
+      activeTabId = 'tab-default';
+      closeTagMenu();
+      const si = q('#hp-todo-search');
+      if (si) si.value = '';
+      render();
+      // Reescribe el respaldo aunque quede vacío, para que al cerrar sesión no se restaure lo borrado.
+      backupNow(true);
+      todoMenu.classList.add('hidden');
+    }
+    q('#hp-clear-btn').addEventListener('click', clearTodoData);
 
     // ---- tutorial (tour guiado y práctico) ----
     const tourEl = q('#hp-tour');
