@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelpPeople Mejoras
 // @namespace    helppeople
-// @version      1.9
+// @version      10
 // @description  Extensión de funcionalidades para HelpPeople
 // @updateURL    https://raw.githubusercontent.com/nijamaDev/hp-scripts/main/helppeople.user.js
 // @downloadURL  https://raw.githubusercontent.com/nijamaDev/hp-scripts/main/helppeople.user.js
@@ -50,7 +50,8 @@
   ];
 
   // Debe coincidir con "@version" de la cabecera (se muestra junto al título).
-  const VERSION = '1.9';
+  // Versionado simple vX (v10, v11, ...). El prefijo "v" lo añade la UI.
+  const VERSION = '10';
 
   let suppressView = false;
   let todoRender = null;
@@ -547,6 +548,8 @@
       '.hp-tab:hover{background:#f5f5f5;}',
       '.hp-tab.active{background:#e6f4ff;border-color:#91caff;color:#1677ff;font-weight:600;}',
       '.hp-tab.drop-target{background:#e8f8ee;border-color:#52c41a;}',
+      '.hp-tab.tab-dragging{opacity:.45;}',
+      '.hp-tab[draggable="true"]:active{cursor:grabbing;}',
       '.hp-tab-name{max-width:110px;overflow:hidden;text-overflow:ellipsis;}',
       '.hp-tab-count{background:rgba(0,0,0,.06);color:#666;font-size:10px;padding:0 5px;border-radius:8px;}',
       '.hp-tab.active .hp-tab-count{background:rgba(22,119,255,.15);color:#1677ff;}',
@@ -1483,6 +1486,7 @@
         const el = document.createElement('div');
         el.className = 'hp-tab' + (tab.id === activeTabId ? ' active' : '');
         el.dataset.tab = tab.id;
+        el.draggable = true;
         const count = all.filter((t) => itemTab(t) === tab.id).length;
         el.innerHTML =
           '<span class="hp-tab-name"></span>' +
@@ -1506,7 +1510,42 @@
             deleteTab(tab.id);
           });
         }
+        el.addEventListener('dragstart', (e) => {
+          // Arrastrar la pestaña para reordenarla. No choca con soltar tickets:
+          // una pestaña que llega se detecta por dragTabId y un ticket por dragCodes.
+          dragTabId = tab.id;
+          dragCode = null;
+          dragCodes = [];
+          e.dataTransfer.effectAllowed = 'move';
+          try {
+            e.dataTransfer.setData('text/plain', 'tab:' + tab.id);
+          } catch (err) {}
+          el.classList.add('tab-dragging');
+        });
+        el.addEventListener('dragend', () => {
+          dragTabId = null;
+          el.classList.remove('tab-dragging');
+          // Re-render para recolocar el botón × (solo lo llevan las pestañas que
+          // no son la primera) tras el reordenado.
+          render();
+        });
         el.addEventListener('dragover', (e) => {
+          if (dragTabId) {
+            // Reordenar pestañas en vivo: se mueve el elemento y se guarda el orden.
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            if (tab.id === dragTabId) return;
+            const bar = q('#hp-todo-tabs');
+            const draggedEl = bar.querySelector('.hp-tab[data-tab="' + dragTabId + '"]');
+            if (!draggedEl) return;
+            const rect = el.getBoundingClientRect();
+            const after = e.clientX > rect.left + rect.width / 2;
+            if ((after ? el.nextElementSibling : el) === draggedEl) return;
+            if (after) el.insertAdjacentElement('afterend', draggedEl);
+            else el.insertAdjacentElement('beforebegin', draggedEl);
+            saveTabs(tabOrderFromDom());
+            return;
+          }
           if (!dragCodes.length) return;
           e.preventDefault();
           e.dataTransfer.dropEffect = 'move';
@@ -1516,6 +1555,7 @@
         el.addEventListener('drop', (e) => {
           e.preventDefault();
           el.classList.remove('drop-target');
+          if (dragTabId) return;
           if (dragCodes.length) assignToTab(dragCodes, tab.id);
         });
         bar.appendChild(el);
@@ -1526,6 +1566,19 @@
       add.textContent = '+';
       add.addEventListener('click', addTab);
       bar.appendChild(add);
+    }
+    // Orden actual de las pestañas según el DOM (para el reordenado en vivo).
+    // La primera pestaña sigue siendo la de respaldo (no se puede borrar y
+    // recibe los tickets nuevos / los de pestañas eliminadas).
+    function tabOrderFromDom() {
+      const tabs = loadTabs();
+      const byId = new Map(tabs.map((t) => [t.id, t]));
+      const order = qa('#hp-todo-tabs .hp-tab').map((el) => el.dataset.tab);
+      const result = order.map((id) => byId.get(id)).filter(Boolean);
+      tabs.forEach((t) => {
+        if (!order.includes(t.id)) result.push(t);
+      });
+      return result;
     }
     function addTab() {
       const tabs = loadTabs();
@@ -1617,8 +1670,9 @@
       if (changed) save(KEY_TODO, list);
       selectedCodes.clear();
       selAnchor = null;
-      activeTabId = tabId;
-      localStorage.setItem(KEY_TAB_ACTIVE, tabId);
+      // La pestaña activa no cambia: se envían los tickets a la pestaña destino
+      // y el usuario se queda donde está (la lista se actualiza al volver a la
+      // pestaña de origen).
       render();
     }
 
@@ -1707,6 +1761,7 @@
     // Reordenar arrastrando y soltando, dejando hueco en vivo
     let dragCode = null;
     let dragCodes = [];
+    let dragTabId = null; // pestaña que se está arrastrando para reordenarla
     listEl.addEventListener('dragstart', (e) => {
       const item = e.target.closest('li.hp-todo-item');
       if (!item) return;

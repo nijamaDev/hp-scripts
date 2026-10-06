@@ -131,7 +131,8 @@ count, a minimize button (`#hp-todo-min`, collapses the panel), and a hamburger 
 (`#hp-todo-gear`) that opens the options menu. The header-right order is min, gear, count. The
 panel is open the first time; once minimized it stays minimized across reloads (`hp_todo_open`).
 `VERSION` must be kept in sync with the `@version` metadata (with `@grant none` there is no
-`GM_info` to read it from).
+`GM_info` to read it from). Versioning is plain `vX` (v10, v11, …): `@version` holds the number
+and the UI prepends the `v`.
 
 - Auto-adds a ticket when its detail view opens (via `MutationObserver` on `h3`).
 - The item for the currently open ticket gets a subtle green background
@@ -154,7 +155,10 @@ panel is open the first time; once minimized it stays minimized across reloads (
   several tickets can be dropped onto a tab at once (reordering is single-item only). Clicking
   anywhere outside the list (or a normal click) clears the selection.
 - **Tabs** (`#hp-todo-tabs`): a horizontal bar under the header. The first tab is the fallback.
-  - Click a tab to filter the list; drag a list item onto a tab to move it there.
+  - Click a tab to filter the list; drag a list item onto a tab to move it there. Dropping does
+    **not** switch the active tab — the tickets just move and the current view stays put.
+  - Drag a tab onto another to reorder it (live reordering, same as the ticket list). The order is
+    saved to `hp_todo_tabs`; the tab you leave in first position becomes the fallback.
   - Double-click a tab name to rename it; the `+` button (`#hp-tab-add`) adds a tab and
     immediately starts renaming it.
   - Deleting a tab (× on any tab except the first) moves its items to the first tab.
@@ -284,7 +288,10 @@ panel is open the first time; once minimized it stays minimized across reloads (
     the default. `itemTab()` maps any item with a missing/unknown tab id to the first tab, so
     legacy items (no `tab` field) and items from a deleted tab are never orphaned. New
     auto-added tickets go to the first tab, and opening a ticket switches the active tab to the
-    one holding it (or the first tab for a new ticket).
+    one holding it (or the first tab for a new ticket). Tabs can be **reordered by dragging**
+    (`tabOrderFromDom()` re-reads the DOM order after each live move), so whichever tab the user
+    leaves first takes over the fallback role: it's the one without a × button (can't be deleted)
+    and the one that receives new tickets and the orphans of deleted tabs.
 
 15. **The todo data is backed up to IndexedDB because the app clears `localStorage` on
     logout.** A userscript only has page-origin storage, and the app wipes `localStorage` when
