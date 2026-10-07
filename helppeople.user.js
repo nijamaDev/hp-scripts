@@ -14,9 +14,13 @@
   'use strict';
 
   // ============================================================
-  // CONFIGURACIÓN DE FUNCIONES - Coloca en "false" las funciones a desactivar
+  // La lista de tickets es el núcleo del script: el widget siempre está
+  // activo y no se puede desactivar. El resto de funciones (módulo, vista,
+  // descripción de OT) se activan/desactivan desde el modal "Configuración"
+  // del widget y se guardan en localStorage (clave hp_settings).
   // ============================================================
-  const CONFIG = {
+
+  const DEFAULT_SETTINGS = {
     // Recuerda si estabas en Dashboard o Solicitudes al recargar la página
     persistModule: true,
 
@@ -25,15 +29,10 @@
 
     // Amplía la "Descripción" de una Orden de Trabajo (quita el límite de altura)
     tallerDescription: true,
-
-    // Muestra un widget flotante con la lista de tickets (esquina inferior izquierda)
-    todoWidget: true,
   };
-  // ============================================================
-  // FIN DE LA CONFIGURACIÓN
-  // ============================================================
 
   const KEY_STATE = 'hp_ui_state';
+  const KEY_SETTINGS = 'hp_settings';
   const KEY_TODO = 'hp_todo';
   const KEY_TAGS = 'hp_tags';
   const KEY_TABS = 'hp_todo_tabs';
@@ -78,12 +77,30 @@
     localStorage.setItem(key, JSON.stringify(val));
     scheduleBackup();
   }
+  // Ajustes del usuario (modal "Configuración"). Siempre fusionados con los
+  // valores por defecto para que una clave vieja o borrosa no deje funciones
+  // apagadas por accidente.
+  function loadSettings() {
+    return Object.assign({}, DEFAULT_SETTINGS, loadObj(KEY_SETTINGS));
+  }
+  function saveSettings(settings) {
+    save(KEY_SETTINGS, settings);
+  }
+  function setting(key) {
+    const s = loadSettings();
+    return s[key];
+  }
+  // Aplica al vuelo (sin recargar) los ajustes que afectan a estilos/observer.
+  function syncSettingEffects() {
+    const style = q('#hp-taller-desc-style');
+    if (style) style.disabled = !setting('tallerDescription');
+  }
 
   // ---------- respaldo en IndexedDB ----------
   // La app borra su localStorage al cerrar sesión, y con él se perderían los
   // tickets. Guardamos una copia en IndexedDB (que no le afecta) y la
   // restauramos al iniciar si las claves no están.
-  const BACKUP_KEYS = [KEY_STATE, KEY_TODO, KEY_TAGS, KEY_TABS, KEY_TAB_ACTIVE, KEY_TODO_OPEN, 'hp_todo_width', 'hp_todo_height'];
+  const BACKUP_KEYS = [KEY_STATE, KEY_SETTINGS, KEY_TODO, KEY_TAGS, KEY_TABS, KEY_TAB_ACTIVE, KEY_TODO_OPEN, 'hp_todo_width', 'hp_todo_height'];
   const BACKUP_DB = 'hp_mejoras';
   const BACKUP_STORE = 'kv';
 
@@ -142,7 +159,7 @@
     return true;
   }
   async function backupNow(force) {
-    if (!CONFIG.todoWidget || typeof indexedDB === 'undefined' || tourActive) return;
+    if (typeof indexedDB === 'undefined' || tourActive) return;
     const todoRaw = localStorage.getItem(KEY_TODO);
     // Si los tickets no están (p. ej. justo tras cerrar sesión), conserva el último respaldo.
     if (todoRaw === null) return;
@@ -172,7 +189,7 @@
   }
   let backupTimer = null;
   function scheduleBackup() {
-    if (!CONFIG.todoWidget || tourActive) return;
+    if (tourActive) return;
     if (backupTimer) return;
     backupTimer = setTimeout(() => {
       backupTimer = null;
@@ -180,7 +197,7 @@
     }, 800);
   }
   async function restoreBackup(force) {
-    if (!CONFIG.todoWidget || typeof indexedDB === 'undefined') return false;
+    if (typeof indexedDB === 'undefined') return false;
     if (tourActive && !force) return false;
     const snap = await idbGet('snapshot');
     if (!snap) return false;
@@ -449,6 +466,7 @@
     document.addEventListener(
       'click',
       (e) => {
+        if (!setting('persistModule')) return;
         const btn = e.target && e.target.closest ? e.target.closest('button.ant-btn') : null;
         if (!btn) return;
         for (const name of MODULES) {
@@ -472,7 +490,7 @@
         const span = btn.closest('span[title^="Vista "]');
         if (span) {
           const v = VIEWS.find((x) => x.title === span.getAttribute('title'));
-          if (v && !suppressView) save(KEY_STATE, Object.assign(loadObj(KEY_STATE), { view: v.key }));
+          if (v && !suppressView && setting('persistView')) save(KEY_STATE, Object.assign(loadObj(KEY_STATE), { view: v.key }));
         }
       },
       true
@@ -481,7 +499,7 @@
     let restoring = false;
     const observer = new MutationObserver(() => {
       const saved = loadObj(KEY_STATE).view;
-      if (!saved || restoring || suppressView) return;
+      if (!saved || restoring || suppressView || !setting('persistView')) return;
       const cur = activeView();
       if (cur && cur !== saved) {
         restoring = true;
@@ -496,9 +514,13 @@
   }
 
   // ---------- característica: descripción de OT más alta ----------
+  // El estilo se inyecta siempre y se habilita/deshabilita con el ajuste,
+  // así el cambio del modal de configuración surte efecto sin recargar.
   function setupTallerDescription() {
     const style = document.createElement('style');
+    style.id = 'hp-taller-desc-style';
     style.textContent = '.ant-drawer .rich-text-content{max-height:none!important;overflow-y:visible!important;}';
+    style.disabled = !setting('tallerDescription');
     document.head.appendChild(style);
   }
 
@@ -525,6 +547,24 @@
       '#hp-todo-menu .m-item:hover{background:#f5f5f5;}',
       '#hp-todo-menu .m-item.m-danger{color:#f5222d;}',
       '#hp-todo-menu .m-item.m-danger:hover{background:#fff1f0;}',
+      '#hp-settings-backdrop{position:fixed;inset:0;z-index:2147483646;background:rgba(0,0,0,.35);}',
+      '#hp-settings-backdrop.hidden{display:none;}',
+      '#hp-settings{position:fixed;z-index:2147483647;top:50%;left:50%;transform:translate(-50%,-50%);width:300px;max-width:calc(100vw - 24px);background:#fff;border:1px solid #e8e8e8;border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.3);}',
+      '#hp-settings.hidden{display:none;}',
+      '#hp-settings .hp-s-head{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid #f0f0f0;font-weight:700;font-size:13px;color:#333;}',
+      '#hp-settings .hp-s-head button{border:none;background:none;color:#999;font-size:16px;cursor:pointer;padding:0 2px;line-height:1;}',
+      '#hp-settings .hp-s-head button:hover{color:#333;}',
+      '#hp-settings-body{display:flex;flex-direction:column;padding:4px 12px;}',
+      '.hp-s-row{display:flex;align-items:center;gap:10px;padding:9px 0;cursor:pointer;user-select:none;}',
+      '.hp-s-row + .hp-s-row{border-top:1px solid #f5f5f5;}',
+      '.hp-s-info{flex:1;min-width:0;}',
+      '.hp-s-label{font-size:13px;color:#333;font-weight:600;}',
+      '.hp-s-desc{font-size:11px;color:#999;margin-top:2px;line-height:1.4;}',
+      '.hp-s-switch{position:relative;width:36px;height:20px;border-radius:10px;background:#d9d9d9;cursor:pointer;flex-shrink:0;transition:background .15s;}',
+      '.hp-s-switch::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;transition:left .15s;box-shadow:0 1px 3px rgba(0,0,0,.25);}',
+      '.hp-s-switch.on{background:#1677ff;}',
+      '.hp-s-switch.on::after{left:18px;}',
+      '#hp-settings .hp-s-foot{padding:8px 12px;border-top:1px solid #f0f0f0;font-size:10px;color:#bbb;display:flex;justify-content:space-between;}',
       '#hp-tour{position:fixed;inset:0;z-index:2147483647;pointer-events:none;}',
       '#hp-tour.hidden{display:none;}',
       '#hp-tour-spotlight{position:fixed;border-radius:8px;box-shadow:0 0 0 9999px rgba(0,0,0,.55);pointer-events:none;transition:top .15s,left .15s,width .15s,height .15s;}',
@@ -656,10 +696,17 @@
       '</div>' +
       '</div>' +
       '<div id="hp-todo-menu" class="hidden">' +
+      '<div class="m-item" id="hp-settings-btn">Configuración</div>' +
+      '<div class="m-item" id="hp-tutorial-btn">Tutorial</div>' +
       '<div class="m-item" id="hp-export-btn">Exportar datos</div>' +
       '<div class="m-item" id="hp-import-btn">Importar datos</div>' +
-      '<div class="m-item" id="hp-tutorial-btn">Tutorial</div>' +
       '<div class="m-item m-danger" id="hp-clear-btn">Limpiar lista</div>' +
+      '</div>' +
+      '<div id="hp-settings-backdrop" class="hidden"></div>' +
+      '<div id="hp-settings" class="hidden" role="dialog" aria-label="Configuración">' +
+      '<div class="hp-s-head"><span>Configuración</span><button id="hp-settings-close" title="Cerrar">&times;</button></div>' +
+      '<div id="hp-settings-body"></div>' +
+      '<div class="hp-s-foot"><span>Los cambios se aplican al momento</span><span>v' + VERSION + '</span></div>' +
       '</div>' +
       '<div id="hp-tour" class="hidden">' +
       '<div id="hp-tour-spotlight"></div>' +
@@ -827,6 +874,59 @@
       todoMenu.classList.add('hidden');
     }
     q('#hp-clear-btn').addEventListener('click', clearTodoData);
+
+    // ---- modal de configuración ----
+    // Filas en el orden del menú solicitado: cada fila alterna el ajuste
+    // en el momento y los efectos se sincronizan con syncSettingEffects().
+    const SETTINGS_ROWS = [
+      ['persistModule', 'Recordar el módulo activo', 'Vuelve a Dashboard o Solicitudes tal como lo dejaste al recargar la página.'],
+      ['persistView', 'Recordar la vista elegida', 'Vuelve a la última vista de Solicitudes (grilla, detallada u órdenes de trabajo) al recargar.'],
+      ['tallerDescription', 'Descripción más alta en OT', 'Quita el límite de altura de la descripción de una Orden de Trabajo.'],
+    ];
+    function renderSettingsRows() {
+      const body = q('#hp-settings-body');
+      if (!body) return;
+      body.innerHTML = '';
+      for (const [key, label, desc] of SETTINGS_ROWS) {
+        const row = document.createElement('div');
+        row.className = 'hp-s-row';
+        row.innerHTML =
+          '<div class="hp-s-info"><div class="hp-s-label"></div><div class="hp-s-desc"></div></div>' +
+          '<div class="hp-s-switch" title="Activar/Desactivar"></div>';
+        row.querySelector('.hp-s-label').textContent = label;
+        row.querySelector('.hp-s-desc').textContent = desc;
+        if (setting(key)) row.querySelector('.hp-s-switch').classList.add('on');
+        row.addEventListener('click', () => {
+          const s = loadSettings();
+          s[key] = !s[key];
+          saveSettings(s);
+          row.querySelector('.hp-s-switch').classList.toggle('on', !!s[key]);
+          syncSettingEffects();
+        });
+        body.appendChild(row);
+      }
+    }
+    function openSettings() {
+      todoMenu.classList.add('hidden');
+      closeTagMenu();
+      renderSettingsRows();
+      q('#hp-settings-backdrop').classList.remove('hidden');
+      q('#hp-settings').classList.remove('hidden');
+    }
+    function closeSettings() {
+      const bd = q('#hp-settings-backdrop');
+      if (!bd || bd.classList.contains('hidden')) return;
+      bd.classList.add('hidden');
+      q('#hp-settings').classList.add('hidden');
+    }
+    q('#hp-settings-btn').addEventListener('click', openSettings);
+    q('#hp-settings-close').addEventListener('click', closeSettings);
+    q('#hp-settings-backdrop').addEventListener('click', closeSettings);
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      const bd = q('#hp-settings-backdrop');
+      if (bd && !bd.classList.contains('hidden')) closeSettings();
+    });
 
     // ---- tutorial (tour guiado y práctico) ----
     const tourEl = q('#hp-tour');
@@ -2289,32 +2389,32 @@
   }
 
   // ---------- inicio ----------
-  if (CONFIG.todoWidget) {
-    await restoreTourBackup();
-    await restoreBackup();
-  }
-  if (CONFIG.persistModule) setupPersistModule();
-  if (CONFIG.persistView) setupPersistView();
-  if (CONFIG.todoWidget) setupTodoWidget();
-  if (CONFIG.tallerDescription) setupTallerDescription();
+  // La lista de tickets es el núcleo: el widget siempre se instala, sin opción
+  // para desactivarlo. Las demás funciones también se instalan y consultan
+  // hp_settings al vuelo, así el modal de configuración surte efecto al momento.
+  await restoreTourBackup();
+  await restoreBackup();
+  setupPersistModule();
+  setupPersistView();
+  setupTodoWidget();
+  setupTallerDescription();
+  syncSettingEffects();
 
-  if (CONFIG.todoWidget) {
-    backupNow();
-    setInterval(backupNow, 15000);
-    // Si la app borra el localStorage en caliente (sin recargar), restaura y redibuja.
-    setInterval(async () => {
-      if (localStorage.getItem(KEY_TODO) === null) {
-        const restored = await restoreBackup();
-        if (restored && todoRender) todoRender();
-      }
-    }, 5000);
-    window.addEventListener('pagehide', backupNow);
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') backupNow();
-    });
-  }
+  backupNow();
+  setInterval(backupNow, 15000);
+  // Si la app borra el localStorage en caliente (sin recargar), restaura y redibuja.
+  setInterval(async () => {
+    if (localStorage.getItem(KEY_TODO) === null) {
+      const restored = await restoreBackup();
+      if (restored && todoRender) todoRender();
+    }
+  }, 5000);
+  window.addEventListener('pagehide', backupNow);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') backupNow();
+  });
 
-  if (CONFIG.persistModule) {
+  if (setting('persistModule')) {
     let attempts = 0;
     const timer = setInterval(() => {
       const map = findModuleButtons();

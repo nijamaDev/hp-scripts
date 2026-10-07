@@ -74,17 +74,32 @@ Opening a ticket shows a detail view with:
 - **`@grant none` is important**: the script runs in the page's main world, so it can read
   the app's `localStorage`, query the DOM, and dispatch real events (which React responds to).
 
-### Feature toggles (top of the file, `CONFIG`)
+### Settings (modal "Configuración", stored in `hp_settings`)
+
+The widget (todo list) is the **core** of the script and can't be turned off — there is no
+`todoWidget` flag anymore. The rest of the features are toggled at runtime from a settings modal
+opened via the widget's options menu (**Configuración** is its first item; order is
+Configuración → Tutorial → Exportar datos → Importar datos → Limpiar lista). Toggles apply
+immediately (no reload needed) and are persisted in `hp_settings` as
+`{ persistModule, persistView, tallerDescription }`, always read merged over
+`DEFAULT_SETTINGS` so a stale key can't silently disable features:
 
 - `persistModule` — remembers Dashboard vs Solicitudes across reloads (`hp_ui_state.module`).
 - `persistView` — remembers grilla/detallada/órdenes (`hp_ui_state.view`) and re-applies it
   when the app resets the view to grilla.
-- `todoWidget` — the floating todo-list widget. Enabling it also enables the IndexedDB backup.
-- `tallerDescription` — removes the OT "Descripción" height cap.
+- `tallerDescription` — removes the OT "Descripción" height cap. The style is always injected
+  (`#hp-taller-desc-style`) and flipped via `style.disabled`, so toggling works live
+  (`syncSettingEffects()`).
+
+The options-menu handlers (`setupPersistModule`/`setupPersistView`) and the persistView
+MutationObserver are installed unconditionally at startup and check their setting on each event,
+so toggling on/off mid-session takes effect without touching internals.
 
 ### localStorage keys owned by the userscript
 
 - `hp_ui_state` — `{ module, view }`.
+- `hp_settings` — `{ persistModule, persistView, tallerDescription }` (the "Configuración"
+  modal's toggles; entries missing on disk fall back to `true`).
 - `hp_todo` — array of `{ code, subject, priority:{label,color}, tags:[tagName...], tab:<tabId> }`.
 - `hp_tags` — array of `{ name, color }` (the tag registry).
 - `hp_todo_tabs` — array of `{ id, name }` (the tab list; the first entry is the fallback tab).
