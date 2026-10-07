@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelpPeople Mejoras
 // @namespace    helppeople
-// @version      10
+// @version      11
 // @description  Extensión de funcionalidades para HelpPeople
 // @updateURL    https://raw.githubusercontent.com/nijamaDev/hp-scripts/main/helppeople.user.js
 // @downloadURL  https://raw.githubusercontent.com/nijamaDev/hp-scripts/main/helppeople.user.js
@@ -50,7 +50,7 @@
 
   // Debe coincidir con "@version" de la cabecera (se muestra junto al título).
   // Versionado simple vX (v10, v11, ...). El prefijo "v" lo añade la UI.
-  const VERSION = '10';
+  const VERSION = '11';
 
   let suppressView = false;
   let todoRender = null;
@@ -516,10 +516,14 @@
   // ---------- característica: descripción de OT más alta ----------
   // El estilo se inyecta siempre y se habilita/deshabilita con el ajuste,
   // así el cambio del modal de configuración surte efecto sin recargar.
+  // Se acota a `.ant-collapse-body` (la sección "Descripción") porque otros
+  // campos ricos del drawer (p. ej. "Avances", dentro de `.ant-tabs-content`)
+  // comparten la clase `.rich-text-content` y no deben tocarse: forzarles
+  // `overflow-y:visible` les añade una barra de scroll que no tienen.
   function setupTallerDescription() {
     const style = document.createElement('style');
     style.id = 'hp-taller-desc-style';
-    style.textContent = '.ant-drawer .rich-text-content{max-height:none!important;overflow-y:visible!important;}';
+    style.textContent = '.ant-drawer .ant-collapse-body .rich-text-content{max-height:none!important;overflow-y:visible!important;}';
     style.disabled = !setting('tallerDescription');
     document.head.appendChild(style);
   }

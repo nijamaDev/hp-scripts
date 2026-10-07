@@ -63,6 +63,9 @@ Opening a ticket shows a detail view with:
   **drawer** (`.ant-drawer`).
 - The "Descripción" is a `.rich-text-content` div that is normally capped at
   `max-height: 120px` (the userscript removes this cap via the `tallerDescription` toggle).
+  Note other rich fields in the drawer share the `.rich-text-content` class — e.g. "Avances"
+  lives under `.ant-tabs-content` — so the toggle's rule is scoped to `.ant-collapse-body`
+  (the "Descripción" section) to avoid adding a scrollbar to "Avances".
 
 ## The userscript
 
@@ -135,7 +138,7 @@ empty list" guard and is used by "Limpiar lista" to persist an intentional wipe.
 | Ticket subject | `h2` matching `/^\[/` |
 | Priority | `span.ant-tag[title="Estado de la Solicitud"]` → same container's `span.text-xs.font-medium` + `.w-2.h-2.rounded-sm` |
 | Back arrow | `.anticon-arrow-left` |
-| OT description | `.ant-drawer .rich-text-content` |
+| OT description | `.ant-drawer .ant-collapse-body .rich-text-content` (scoped: "Avances" etc. share `.rich-text-content`) |
 | Sidebar / logo | `nav`; logo `nav img[alt="Logo"]` |
 
 ## The todo widget
